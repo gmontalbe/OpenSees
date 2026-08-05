@@ -477,6 +477,83 @@ static PyObject *Py_ops_element(PyObject *self, PyObject *args)
     return wrapper->getResults();
 }
 
+// Batch-broadcast dispatcher shared by the "nodes"/"elements" commands.
+// Every top-level list/tuple argument is a per-item column (its i-th entry is
+// used for item i); every scalar argument is broadcast unchanged to every item.
+// All list/tuple arguments must share the same length N (the batch size). A
+// per-item entry that is itself a list/tuple is spliced in as several tokens, so
+// per-item vector properties (e.g. a mass row) are supported. For each item a
+// synthetic argument tuple is built and handed to the existing single-item
+// handler (OPS_Node / OPS_Element), which reuses all per-type parsing, optional
+// flags and Domain insertion.
+static PyObject *Py_ops_batch(PyObject *args, int (*handler)(void), const char *cmdName)
+{
+    Py_ssize_t nargs = PyTuple_Size(args);
+
+    // batch size N from the list/tuple arguments; validate equal lengths
+    Py_ssize_t N = -1;
+    for (Py_ssize_t a = 0; a < nargs; a++) {
+	PyObject *o = PyTuple_GetItem(args, a);
+	if (PyList_Check(o) || PyTuple_Check(o)) {
+	    Py_ssize_t len = PySequence_Size(o);
+	    if (N == -1) {
+		N = len;
+	    } else if (len != N) {
+		PyErr_Format(PyExc_ValueError,
+			     "%s: all list arguments must have the same length", cmdName);
+		return NULL;
+	    }
+	}
+    }
+    if (N < 0) N = 1;  // no list arguments -> single item
+
+    for (Py_ssize_t i = 0; i < N; i++) {
+	PyObject *item = PyList_New(0);
+	for (Py_ssize_t a = 0; a < nargs; a++) {
+	    PyObject *o = PyTuple_GetItem(args, a);          // borrowed
+	    if (PyList_Check(o) || PyTuple_Check(o)) {
+		PyObject *e = PySequence_GetItem(o, i);      // new ref
+		if (PyList_Check(e) || PyTuple_Check(e)) {   // splice nested vector
+		    Py_ssize_t m = PySequence_Size(e);
+		    for (Py_ssize_t k = 0; k < m; k++) {
+			PyObject *ek = PySequence_GetItem(e, k);
+			PyList_Append(item, ek);
+			Py_DECREF(ek);
+		    }
+		} else {
+		    PyList_Append(item, e);
+		}
+		Py_DECREF(e);
+	    } else {
+		PyList_Append(item, o);                      // broadcast scalar
+	    }
+	}
+	PyObject *itemTuple = PyList_AsTuple(item);          // new ref
+	Py_DECREF(item);
+
+	wrapper->resetCommandLine(PyTuple_Size(itemTuple), 1, itemTuple);
+	int ok = handler();
+	Py_DECREF(itemTuple);
+
+	if (ok < 0) {
+	    opserr<<(void*)0;
+	    return NULL;
+	}
+    }
+
+    Py_RETURN_NONE;
+}
+
+static PyObject *Py_ops_nodes(PyObject *self, PyObject *args)
+{
+    return Py_ops_batch(args, &OPS_Node, "nodes");
+}
+
+static PyObject *Py_ops_elements(PyObject *self, PyObject *args)
+{
+    return Py_ops_batch(args, &OPS_Element, "elements");
+}
+
 static PyObject *Py_ops_timeSeries(PyObject *self, PyObject *args)
 {
     wrapper->resetCommandLine(PyTuple_Size(args), 1, args);
@@ -3096,8 +3173,10 @@ PythonWrapper::addOpenSeesCommands()
     addCommand("wipe", &Py_ops_wipe);
     addCommand("model", &Py_ops_model);
     addCommand("node", &Py_ops_node);
+    addCommand("nodes", &Py_ops_nodes);
     addCommand("fix", &Py_ops_fix);
     addCommand("element", &Py_ops_element);
+    addCommand("elements", &Py_ops_elements);
     addCommand("timeSeries", &Py_ops_timeSeries);
     addCommand("pattern", &Py_ops_pattern);
     addCommand("load", &Py_ops_nodalLoad);
