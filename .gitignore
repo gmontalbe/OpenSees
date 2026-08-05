@@ -91,3 +91,5 @@ build
 bin
 __pycache__
 *.dat
+
+CLAUDE.md
