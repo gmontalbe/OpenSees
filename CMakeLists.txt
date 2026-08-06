@@ -477,6 +477,19 @@ if(MKL_FOUND)
     endif()
 
     set (SCALAPACK_LIBRARIES "${MKL_LPATH}/mkl_scalapack_ilp64.lib;${MKL_LPATH}/mkl_intel_ilp64.lib;${MKL_LPATH}/mkl_sequential.lib;${MKL_LPATH}/mkl_core.lib;${MKL_LPATH}/mkl_blacs_intelmpi_ilp64.lib")
+  else()
+    # find_package(LAPACK) resolves BLAS/LAPACK via CMake's system-default
+    # search (FIND_PACKAGE_MESSAGE_DETAILS_LAPACK), which can land on a
+    # different/mismatched MKL install (e.g. an older apt libmkl-* package)
+    # than the oneAPI MKL located above. Mixing the two at runtime causes
+    # "undefined symbol" MKL loader crashes. Since oneAPI MKL was found,
+    # link against it explicitly instead so the whole MKL stack comes from
+    # one consistent, matched install.
+    set(LAPACK_LIBRARIES
+        "${MKL_ROOT}/lib/libmkl_gf_lp64.so"
+        "${MKL_ROOT}/lib/libmkl_gnu_thread.so"
+        "${MKL_ROOT}/lib/libmkl_core.so"
+        gomp pthread m dl)
   endif()
 
 else()
@@ -599,11 +612,6 @@ target_link_libraries(G3
 #
 
 add_library(OpenSeesLIB  EXCLUDE_FROM_ALL)
-
-#
-# For UMFPACK long int DLONG version -- Gustavo, Michael
-#
-target_compile_definitions(OpenSeesLIB PUBLIC _UMFPACK_DLONG)
 
 target_link_libraries(OpenSeesLIB
     ${OPS_Extension_List}
@@ -801,10 +809,6 @@ if(MPI_FOUND)
     target_include_directories(OpenSeesMP PRIVATE ${MUMPS_DIR}/_deps/mumps-src/include ${MPI_CXX_INCLUDE_DIRS})
 
     target_compile_options(OpenSeesMP PRIVATE ${MPI_CXX_COMPILE_FLAGS})
-
-    if (NOT DEFINED MUMPS_DIR)
-        add_dependencies(OpenSeesMP mumps)
-    endif()
 
     if (DEFINED OPENMPI)
         target_compile_definitions(OpenSeesMP
