@@ -86,6 +86,13 @@ class DowelType : public UniaxialMaterial
         FEM_ObjectBroker &theBroker);
     void Print(OPS_Stream &s, int flag =0);
 
+    // Runtime parameter access, e.g. for HankinsonDowel2d's parameter-level
+    // Hankinson interpolation between a 0-deg and a 90-deg calibration.
+    // Only the -exponential envelope's shape parameters (F0/K0/K1/Dc/Kd) are
+    // mutable; Fi/Kp/Dy are mutable for every envelope type.
+    int setParameter(const char **argv, int argc, Parameter &param);
+    int updateParameter(int parameterID, Information &info);
+
   protected:
 
   private:
@@ -116,6 +123,8 @@ class DowelType : public UniaxialMaterial
     double dult_n;    // ultimate displacement
     double kdesc_p;   // descending stiffness
     double kdesc_n;   // descending stiffness
+    double du_p;      // raw ultimate-displacement input (0.0 => auto from dcap/fcap/kdesc)
+    double du_n;      // raw ultimate-displacement input (0.0 => auto from dcap/fcap/kdesc)
 
     // other variables to initialize in construction methods
     double dinter_p;  // intersection of pinching and ascending env.
@@ -176,6 +185,9 @@ class DowelType : public UniaxialMaterial
     double cFdmax;  // committed force corresponding to the maximum displacement in history
 
     // private methods
+    void setDerivedProperties(void);          // (re)compute fcap/dult/fyield/dinter/eMono
+                                               // from the primary shape parameters; called
+                                               // from the ctor and from updateParameter()
     double envelope(double disp);             // envelope curve
     double denvelope(double disp);            // envelope tangent
     double envIntersection(double k, double b);  // solve intersection of ascending envelope and a line (positive disp)

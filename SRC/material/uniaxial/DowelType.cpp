@@ -39,6 +39,8 @@
 #include <Vector.h>
 #include <ID.h>
 #include <Channel.h>
+#include <Information.h>
+#include <Parameter.h>
 #include <math.h>
 #include <float.h>
 #include "DowelType.h"
@@ -261,10 +263,11 @@ UniaxialMaterial(tag, MAT_TAG_DowelType),
 fi(Fi), kp(Kp), ru(Ru), c(c),
 beta(beta), gamma(gamma), eta(eta),
 dyield(Dy), alpha_p(Ap), alpha_u(Au), alpha_r(Ar),
-envType(1), 
-k0_p(K0_p), k0_n(K0_n), dcap_p(Dc_p), dcap_n(Dc_n), kdesc_p(Kd_p), kdesc_n(Kd_n), 
+envType(1),
+k0_p(K0_p), k0_n(K0_n), dcap_p(Dc_p), dcap_n(Dc_n), kdesc_p(Kd_p), kdesc_n(Kd_n),
+du_p(Du_p), du_n(Du_n),
 k1_p(R1_p*K0_p), k1_n(R1_n*K0_n), f0_p(F0_p), f0_n(F0_n),
-denv1_p(0.0), denv1_n(0.0), fenv1_p(0.0), fenv1_n(0.0), 
+denv1_p(0.0), denv1_n(0.0), fenv1_p(0.0), fenv1_n(0.0),
 denv2_p(0.0), denv2_n(0.0), fenv2_p(0.0), fenv2_n(0.0),
 envSize(0), envZero(0),
 isPHC(true), ePHC_p(0.0), ePHC_n(0.0), eFHC_p(0.0), eFHC_n(0.0),
@@ -273,24 +276,7 @@ cStrain(0.0), cStress(0.0), cTangent(K0_p),
 tPath(1), tDmin(0.0), tFdmin(0.0), tDmax(0.0), tFdmax(0.0),
 cPath(1), cDmin(0.0), cFdmin(0.0), cDmax(0.0), cFdmax(0.0)
 {
-    fcap_p = (F0_p + k1_p * Dc_p) * (1 - exp(-1 * K0_p * Dc_p / F0_p));
-    fcap_n = (F0_n + k1_n * Dc_n) * (1 - exp(-1 * K0_n * Dc_n / F0_n));
-    dult_p = (fabs(Du_p) < DBL_EPSILON) ? dcap_p + fcap_p / kdesc_p : Du_p;
-    dult_n = (fabs(Du_n) < DBL_EPSILON) ? dcap_n + fcap_n / kdesc_n : Du_n;
-    fyield_p = envelope(Dy);
-    fyield_n = envelope(-Dy);
-    dinter_p = envIntersection(Kp, Fi);
-    dinter_n = envIntersection(Kp, -Fi);
-    double x_p = exp(K0_p * Dc_p / F0_p); // integral exponential term
-    eMono_p = Dc_p * Dc_p * k1_p / 2 -
-        pow(F0_p / K0_p, 2) * (K0_p + k1_p) / x_p * (x_p - 1) +
-        Dc_p * (F0_p * k1_p / x_p / K0_p + F0_p) +
-        0.5 * (1 + 0.8) * (1 - 0.8) * pow(fcap_p, 2) / kdesc_p;
-    double x_n = exp(K0_n * Dc_n / F0_n); // integral exponential term
-    eMono_n = Dc_n * Dc_n * k1_n / 2 -
-        pow(F0_n / K0_n, 2) * (K0_n + k1_n) / x_n * (x_n - 1) +
-        Dc_n * (F0_n * k1_n / x_n / K0_n + F0_n) +
-        0.5 * (1 + 0.8) * (1 - 0.8) * pow(fcap_n, 2) / kdesc_n;
+    this->setDerivedProperties();
     for (int i=0; i < 20; i++) {
         pxs[i] = 0.0;
         pys[i] = 0.0;
@@ -313,8 +299,9 @@ fi(Fi), kp(Kp), ru(Ru), c(c),
 beta(beta), gamma(gamma), eta(eta),
 dyield(Dy), alpha_p(Ap), alpha_u(Au), alpha_r(Ar),
 envType(2), 
-k0_p(F1_p / D1_p), k0_n(F1_n / D1_n), dcap_p(Dc_p), dcap_n(Dc_n), 
-fcap_p(Fc_p), fcap_n(Fc_n), kdesc_p(Kd_p), kdesc_n(Kd_n), 
+k0_p(F1_p / D1_p), k0_n(F1_n / D1_n), dcap_p(Dc_p), dcap_n(Dc_n),
+fcap_p(Fc_p), fcap_n(Fc_n), kdesc_p(Kd_p), kdesc_n(Kd_n),
+du_p(Du_p), du_n(Du_n),
 k1_p(0.0), k1_n(0.0), f0_p(0.0), f0_n(0.0),
 denv1_p(D1_p), denv1_n(D1_n), fenv1_p(F1_p), fenv1_n(F1_n), 
 denv2_p(D2_p), denv2_n(D2_n), fenv2_p(F2_p), fenv2_n(F2_n),
@@ -381,7 +368,8 @@ UniaxialMaterial(tag, MAT_TAG_DowelType),
 fi(Fi), kp(Kp), ru(Ru), c(c),
 beta(beta), gamma(gamma), eta(eta),
 dyield(Dy), alpha_p(Ap), alpha_u(Au), alpha_r(Ar),
-envType(3), 
+envType(3),
+du_p(0.0), du_n(0.0),
 k1_p(0.0), k1_n(0.0), f0_p(0.0), f0_n(0.0),
 denv1_p(0.0), denv1_n(0.0), fenv1_p(0.0), fenv1_n(0.0), 
 denv2_p(0.0), denv2_n(0.0), fenv2_p(0.0), fenv2_n(0.0),
@@ -452,8 +440,9 @@ fi(0.0), kp(0.0), ru(0.0), c(0.0),
 beta(0.0), gamma(0.0), eta(0.0),
 dyield(0.0), alpha_p(0.0), alpha_u(0.0), alpha_r(0.0),
 envType(0), 
-k0_p(0.0), k0_n(0.0), dcap_p(0.0), dcap_n(0.0), fcap_p(0.0), fcap_n(0.0), 
-fyield_p(0.0), fyield_n(0.0), dult_p(0.0), dult_n(0.0), kdesc_p(0.0), kdesc_n(0.0), 
+k0_p(0.0), k0_n(0.0), dcap_p(0.0), dcap_n(0.0), fcap_p(0.0), fcap_n(0.0),
+fyield_p(0.0), fyield_n(0.0), dult_p(0.0), dult_n(0.0), kdesc_p(0.0), kdesc_n(0.0),
+du_p(0.0), du_n(0.0),
 dinter_p(0.0), dinter_n(0.0), eMono_p(0.0), eMono_n(0.0),
 k1_p(0.0), k1_n(0.0), f0_p(0.0), f0_n(0.0),
 denv1_p(0.0), denv1_n(0.0), fenv1_p(0.0), fenv1_n(0.0), 
@@ -484,6 +473,44 @@ DowelType::~DowelType()
         delete [] fenvs;
         fenvs = NULL;
     }
+}
+
+// (Re)compute the quantities that are derived from the primary shape
+// parameters: fcap/dult/eMono (exponential envelope only -- for the Bezier
+// and piecewise envelopes these are either primaries or array-derived and
+// are not currently exposed through setParameter), and fyield/dinter (all
+// envelope types, since these only depend on kp/fi/dyield through the
+// already envType-aware envelope()/envIntersection() calls). Called once
+// from the exponential ctor and again from updateParameter() whenever a
+// shape parameter is mutated at runtime (e.g. by HankinsonDowel2d's
+// parameter-level Hankinson interpolation between a 0-deg and a 90-deg
+// calibration of this material).
+void DowelType::setDerivedProperties(void)
+{
+    if (envType == 1) {
+        fcap_p = (f0_p + k1_p * dcap_p) * (1 - exp(-1 * k0_p * dcap_p / f0_p));
+        fcap_n = (f0_n + k1_n * dcap_n) * (1 - exp(-1 * k0_n * dcap_n / f0_n));
+        dult_p = (fabs(du_p) < DBL_EPSILON) ? dcap_p + fcap_p / kdesc_p : du_p;
+        dult_n = (fabs(du_n) < DBL_EPSILON) ? dcap_n + fcap_n / kdesc_n : du_n;
+        double x_p = exp(k0_p * dcap_p / f0_p); // integral exponential term
+        eMono_p = dcap_p * dcap_p * k1_p / 2 -
+            pow(f0_p / k0_p, 2) * (k0_p + k1_p) / x_p * (x_p - 1) +
+            dcap_p * (f0_p * k1_p / x_p / k0_p + f0_p) +
+            0.5 * (1 + 0.8) * (1 - 0.8) * pow(fcap_p, 2) / kdesc_p;
+        double x_n = exp(k0_n * dcap_n / f0_n); // integral exponential term
+        eMono_n = dcap_n * dcap_n * k1_n / 2 -
+            pow(f0_n / k0_n, 2) * (k0_n + k1_n) / x_n * (x_n - 1) +
+            dcap_n * (f0_n * k1_n / x_n / k0_n + f0_n) +
+            0.5 * (1 + 0.8) * (1 - 0.8) * pow(fcap_n, 2) / kdesc_n;
+    }
+    // envType == 2 (Bezier) and envType == 3 (piecewise) do not currently
+    // support runtime mutation of their shape parameters, so fcap/dult/eMono
+    // are left as set by their constructors.
+
+    fyield_p = envelope(dyield);
+    fyield_n = envelope(-dyield);
+    dinter_p = envIntersection(kp, fi);
+    dinter_n = envIntersection(kp, -fi);
 }
 
 double DowelType::envelope(double disp)
@@ -1503,6 +1530,150 @@ void DowelType::Print(OPS_Stream &s, int flag)
         }
         s << "\t\t\t}" << endln;
     }
+}
+
+int
+DowelType::setParameter(const char **argv, int argc, Parameter &param)
+{
+    if (argc < 1)
+        return -1;
+
+    // Hysteresis parameters, valid for every envelope type: changing any of
+    // these only requires recomputing fyield_p/n and dinter_p/n.
+    if (strcmp(argv[0], "Fi") == 0 || strcmp(argv[0], "fi") == 0) {
+        param.setValue(fi);
+        return param.addObject(1, this);
+    }
+    if (strcmp(argv[0], "Kp") == 0 || strcmp(argv[0], "kp") == 0) {
+        param.setValue(kp);
+        return param.addObject(2, this);
+    }
+    if (strcmp(argv[0], "Dy") == 0 || strcmp(argv[0], "dy") == 0) {
+        param.setValue(dyield);
+        return param.addObject(3, this);
+    }
+
+    // -exponential envelope shape parameters. K1 (the asymptotic/post-yield
+    // stiffness) is exposed directly rather than only through R1, because
+    // Hankinson-interpolating R1 and K0 separately does not give the same
+    // result as interpolating K1 itself (the product of two harmonic means
+    // is not the harmonic mean of the products).
+    if (envType != 1) {
+        if (strcmp(argv[0], "F0p") == 0 || strcmp(argv[0], "F0n") == 0 ||
+            strcmp(argv[0], "K0p") == 0 || strcmp(argv[0], "K0n") == 0 ||
+            strcmp(argv[0], "K1p") == 0 || strcmp(argv[0], "K1n") == 0 ||
+            strcmp(argv[0], "Dcp") == 0 || strcmp(argv[0], "Dcn") == 0 ||
+            strcmp(argv[0], "Kdp") == 0 || strcmp(argv[0], "Kdn") == 0) {
+            opserr << "DowelType::setParameter -- parameter \"" << argv[0]
+                   << "\" is only available for the -exponential envelope"
+                   << endln;
+            return -1;
+        }
+        return -1;
+    }
+
+    if (strcmp(argv[0], "F0p") == 0) {
+        param.setValue(f0_p);
+        return param.addObject(10, this);
+    }
+    if (strcmp(argv[0], "F0n") == 0) {
+        param.setValue(f0_n);
+        return param.addObject(11, this);
+    }
+    if (strcmp(argv[0], "K0p") == 0) {
+        param.setValue(k0_p);
+        return param.addObject(12, this);
+    }
+    if (strcmp(argv[0], "K0n") == 0) {
+        param.setValue(k0_n);
+        return param.addObject(13, this);
+    }
+    if (strcmp(argv[0], "K1p") == 0) {
+        param.setValue(k1_p);
+        return param.addObject(14, this);
+    }
+    if (strcmp(argv[0], "K1n") == 0) {
+        param.setValue(k1_n);
+        return param.addObject(15, this);
+    }
+    if (strcmp(argv[0], "Dcp") == 0) {
+        param.setValue(dcap_p);
+        return param.addObject(16, this);
+    }
+    if (strcmp(argv[0], "Dcn") == 0) {
+        param.setValue(dcap_n);
+        return param.addObject(17, this);
+    }
+    if (strcmp(argv[0], "Kdp") == 0) {
+        param.setValue(kdesc_p);
+        return param.addObject(18, this);
+    }
+    if (strcmp(argv[0], "Kdn") == 0) {
+        param.setValue(kdesc_n);
+        return param.addObject(19, this);
+    }
+
+    return -1;
+}
+
+int
+DowelType::updateParameter(int parameterID, Information &info)
+{
+    switch (parameterID) {
+    case -1:
+        return -1;
+    case 1:
+        fi = info.theDouble;
+        break;
+    case 2:
+        kp = info.theDouble;
+        break;
+    case 3:
+        dyield = info.theDouble;
+        break;
+    case 10:
+        f0_p = info.theDouble;
+        break;
+    case 11:
+        f0_n = info.theDouble;
+        break;
+    case 12:
+        k0_p = info.theDouble;
+        break;
+    case 13:
+        k0_n = info.theDouble;
+        break;
+    case 14:
+        k1_p = info.theDouble;
+        break;
+    case 15:
+        k1_n = info.theDouble;
+        break;
+    case 16:
+        dcap_p = info.theDouble;
+        break;
+    case 17:
+        dcap_n = info.theDouble;
+        break;
+    case 18:
+        kdesc_p = info.theDouble;
+        break;
+    case 19:
+        kdesc_n = info.theDouble;
+        break;
+    default:
+        return -1;
+    }
+
+    // Note: this deliberately does NOT commit or otherwise re-sync tStress/
+    // tTangent -- mutating the envelope mid-analysis while history points
+    // (cDmax/cDmin/cFdmax/cFdmin, ePHC/eFHC) still refer to the old envelope
+    // is inherent to any runtime-mutable hysteretic law; the caller (e.g.
+    // HankinsonDowel2d) is responsible for re-syncing the trial state after
+    // a batch of parameter updates if it needs to.
+    this->setDerivedProperties();
+
+    return 0;
 }
 
 

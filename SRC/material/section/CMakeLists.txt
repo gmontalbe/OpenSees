@@ -29,6 +29,7 @@ target_sources(OPS_Material
     FiberSectionGJ.cpp
     FiberSectionGJThermal.cpp    
     GenericSection1d.cpp
+    HankinsonDowel2d.cpp
     Isolator2spring.cpp
     ASDCoupledHinge3D.cpp
     LayeredShellFiberSection.cpp
@@ -67,6 +68,7 @@ target_sources(OPS_Material
     FiberSectionGJ.h
     FiberSectionGJThermal.h
     GenericSection1d.h
+    HankinsonDowel2d.h
     Isolator2spring.h
     ASDCoupledHinge3D.h
     LayeredShellFiberSection.h

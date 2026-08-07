@@ -31,6 +31,7 @@ OBJS       = SectionForceDeformation.o \
 	BiaxialHysteretic.o \
 	McftSection2dfiber.o \
 	ASDCoupledHinge3D.o \
+	HankinsonDowel2d.o \
 	LayeredShellFiberSection.o \
 	LayeredShellFiberSectionThermal.o \
 	FiberSection3dThermal.o \
