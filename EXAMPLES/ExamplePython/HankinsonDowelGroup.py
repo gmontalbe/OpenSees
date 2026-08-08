@@ -129,7 +129,15 @@ N_ROWS, N_COLUMNS = 3, 3
 DOWEL_MAT, SEC_TAG, MASTER_NODE = 20, 1, 9000
 
 
+GROUP_SEC_TAG, GROUP_ELE_TAG, GROUP_GROUND_NODE = 2, 500, 500
+
+
 def build_model():
+    """The hand-built group: one zeroLengthSection element per dowel, tied
+    together with rigidLink. Kept as the reference model that
+    build_group_model() below is verified against -- see
+    tests/test_bolt_group_section2d.py, where the two must agree to
+    round-off."""
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
 
@@ -145,6 +153,46 @@ def build_model():
     coords = dowel_coordinates_rp(N_ROWS, N_COLUMNS, A1, A2, A3, A4)
     dowels = build_dowel_group(coords, SEC_TAG, MASTER_NODE)
     return dowels
+
+
+def build_group_model():
+    """The same connection as ONE element, via BoltGroupSection2d.
+
+    BoltGroupSection2d takes the single-dowel HankinsonSection2d above as a
+    PROTOTYPE and copies it once per fastener, then does internally what
+    build_dowel_group() does with nodes and constraints: it maps the
+    reference point's (u_x, u_y, theta) onto each fastener by that
+    fastener's lever arm and sums the forces back into (N, V, M). '-grid
+    nRows nCols a1 a2' lays out the same centroid-referred grid
+    dowel_coordinates_rp() computes (the edge distances a3/a4 cancel out of
+    centroid-referred coordinates, so they are not needed here).
+
+    This replaces 9 elements plus 9 rigidLink constraints with 1 element and
+    3 free DOF, and -- because there are no multi-point constraints left --
+    it also sidesteps the TransformationConstraintHandler problem documented
+    in HankinsonDowelGroup3d.apply_normal_force().
+
+    Returns (ele_tag, coords) so callers can label per-fastener output.
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+
+    saws_dowel_type(DOWEL_MAT, F0_0, K0_0, K1_0)
+    ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
+                '-param', 'F0', F0_0, F0_90,
+                '-param', 'S0', K0_0, K0_90,
+                '-param', 'K1', K1_0, K1_90)
+    ops.section('BoltGroupSection2d', GROUP_SEC_TAG, '-section', SEC_TAG,
+                '-grid', N_ROWS, N_COLUMNS, A1, A2)
+
+    ops.node(GROUP_GROUND_NODE, 0.0, 0.0)
+    ops.fix(GROUP_GROUND_NODE, 1, 1, 1)
+    ops.node(MASTER_NODE, 0.0, 0.0)
+    ops.element('zeroLengthSection', GROUP_ELE_TAG,
+                GROUP_GROUND_NODE, MASTER_NODE, GROUP_SEC_TAG,
+                '-orient', 1, 0, 0)
+
+    return GROUP_ELE_TAG, dowel_coordinates_rp(N_ROWS, N_COLUMNS, A1, A2, A3, A4)
 
 
 def apply_normal_force(n_target, pattern_tag=5, n_steps=10):
@@ -208,6 +256,72 @@ def push_moment(m_target, n_steps, pattern_tag=1):
         m_hist.append(m_target * len(phi_hist) / n_steps)
         phi_hist.append(ops.nodeDisp(MASTER_NODE, 3))
     return m_hist, phi_hist
+
+
+def plot_bolt_group(ele_tag, coords, ax=None, force_scale=None, title=None,
+                     ref_node=None):
+    """The one-element counterpart of plot_dowel_group(): identical picture,
+    but each fastener's force comes from the group section's own
+    'boltForces' response instead of from a per-dowel ground node's
+    reaction. The sign convention differs accordingly -- 'boltForces' is
+    already the force the fastener carries, so unlike plot_dowel_group()
+    there is no reaction to negate.
+
+    Note the plural in 'bolt i forces' if you read fasteners individually:
+    HankinsonSection2d intercepts the SINGULAR 'force' with its own scalar
+    slip-law force, so only 'forces' gives the (P, Vy) pair. 'boltForces'
+    is the concatenation of the plural one.
+    """
+    import matplotlib.pyplot as plt
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6.5, 6.5))
+
+    f = ops.eleResponse(ele_tag, 'section', 'boltForces')
+    xs = [x for x, _ in coords]
+    ys = [y for _, y in coords]
+    fx = [f[2 * i] for i in range(len(coords))]
+    fy = [f[2 * i + 1] for i in range(len(coords))]
+
+    fmag = [(u * u + v * v) ** 0.5 for u, v in zip(fx, fy)]
+    fmax = max(fmag) if fmag else 0.0
+    if force_scale is None:
+        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0e-6)
+        force_scale = 0.4 * span / fmax if fmax > 0 else 1.0
+
+    # unpacked by index, not by position, so this works unchanged for the 3D
+    # model in HankinsonDowelGroup3d (where nodeCoord returns three values)
+    coord = ops.nodeCoord(MASTER_NODE if ref_node is None else ref_node)
+    mx, my = coord[0], coord[1]
+    cr = ops.eleResponse(ele_tag, 'section', 'centerOfRotation')
+
+    ax.scatter(xs, ys, s=70, c='saddlebrown', zorder=3, label='dowels')
+    ax.scatter([mx], [my], marker='+', s=140, c='black', zorder=3,
+               linewidths=2, label='reference point')
+    if cr and abs(cr[0]) < 10 * max(abs(v) for v in xs + ys):
+        ax.scatter([cr[0]], [cr[1]], marker='x', s=110, c='tab:blue',
+                   zorder=3, linewidths=2, label='centre of rotation')
+    for x, y in zip(xs, ys):
+        ax.plot([mx, x], [my, y], color='0.75', linewidth=0.8,
+                linestyle='--', zorder=1)
+
+    ax.quiver(xs, ys, [u * force_scale for u in fx],
+              [v * force_scale for v in fy],
+              angles='xy', scale_units='xy', scale=1,
+              color='crimson', width=0.006, zorder=2,
+              label='dowel force')
+
+    for i, ((x, y), m) in enumerate(zip(coords, fmag)):
+        ax.annotate("%d\n%.1f kN" % (i, m), (x, y),
+                    textcoords="offset points", xytext=(7, 7), fontsize=7)
+
+    ax.set_aspect('equal', adjustable='datalim')
+    ax.set_xlabel('x (m, parallel to grain)')
+    ax.set_ylabel('y (m, perpendicular to grain)')
+    ax.grid(True, linestyle=':')
+    ax.legend(loc='best', fontsize=8)
+    if title:
+        ax.set_title(title)
+    return ax
 
 
 def plot_dowel_group(dowels, ax=None, force_scale=None, title=None):
@@ -299,9 +413,26 @@ if __name__ == '__main__':
         have_plt = False
         print("\nmatplotlib not available -- skipping plots.\n")
 
+    # Cross-check the two model forms once, at the hardest preload level, so
+    # the demo itself demonstrates that they are the same mechanics: the
+    # single BoltGroupSection2d element and the 9-element + rigidLink model
+    # must agree to round-off (both are linear in the rotation).
+    build_model()
+    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
+    phi_multi = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
+    build_group_model()
+    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
+    phi_single = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
+    print("cross-check at N = %.0f kN: phi(9 elements + rigidLink) = %.12e"
+          % (NORMAL_FORCE_LEVELS[-1], phi_multi))
+    print("                            phi(1 BoltGroupSection2d)  = %.12e"
+          % phi_single)
+    print("                            difference                 = %.3e\n"
+          % abs(phi_multi - phi_single))
+
     curves = {}
     for i, n_val in enumerate(NORMAL_FORCE_LEVELS):
-        dowels = build_model()
+        ele_tag, coords = build_group_model()
         if n_val:
             apply_normal_force(n_val)
         m_hist, phi_hist = push_moment(m_target=M_TARGET, n_steps=80)
@@ -319,13 +450,14 @@ if __name__ == '__main__':
               % (n_val, m_hist[i_mid], k_mid, m_hist[-1], k_final))
 
         if have_plt:
-            plot_dowel_group(dowels, ax=axes[i], title="N = %.0f kN" % n_val)
+            plot_bolt_group(ele_tag, coords, ax=axes[i],
+                            title="N = %.0f kN" % n_val)
 
     if have_plt:
-        fig.suptitle("3x3 dowel group: force transfer under varying axial "
-                      "preload, at M = %.1f kN.m"
-                      "\n(HankinsonSection2d + SAWSMaterial, "
-                      "-paramHankinson)" % M_TARGET)
+        fig.suptitle("3x3 dowel group as ONE element: force transfer under "
+                      "varying axial preload, at M = %.1f kN.m"
+                      "\n(BoltGroupSection2d over a HankinsonSection2d "
+                      "prototype + SAWSMaterial)" % M_TARGET)
         fig.tight_layout()
 
         fig2, ax2 = plt.subplots(figsize=(6.5, 5))

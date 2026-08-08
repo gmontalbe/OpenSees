@@ -373,6 +373,7 @@
 #define SEC_TAG_ASDCoupledHinge3D 39
 #define SEC_TAG_PipeSection 40
 #define SEC_TAG_HankinsonSection2d 41
+#define SEC_TAG_BoltGroupSection2d 42
 
 #define SEC_TAG_MCFTFiberSection2d 7601
 

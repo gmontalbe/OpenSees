@@ -89,6 +89,7 @@ void* OPS_ElasticTubeSection3d();
 void* OPS_ParallelSection();
 void* OPS_ASDCoupledHinge3D();
 void* OPS_HankinsonSection2d();
+void* OPS_BoltGroupSection2d();
 void* OPS_SectionAggregator();
 void* OPS_ElasticPlateSection();
 void* OPS_LayeredShellFiberSection();
@@ -299,6 +300,7 @@ namespace {
 	functionMap.insert(std::make_pair("Parallel", &OPS_ParallelSection));
 	functionMap.insert(std::make_pair("ASDCoupledHinge3D", &OPS_ASDCoupledHinge3D));
 	functionMap.insert(std::make_pair("HankinsonSection2d", &OPS_HankinsonSection2d));
+	functionMap.insert(std::make_pair("BoltGroupSection2d", &OPS_BoltGroupSection2d));
 	functionMap.insert(std::make_pair("Aggregator", &OPS_SectionAggregator));
 	functionMap.insert(std::make_pair("AddDeformation", &OPS_SectionAggregator));
 	functionMap.insert(std::make_pair("ElasticPlateSection", &OPS_ElasticPlateSection));

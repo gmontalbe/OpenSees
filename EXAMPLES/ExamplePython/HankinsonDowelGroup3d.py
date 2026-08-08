@@ -118,6 +118,51 @@ def build_model():
     return dowels
 
 
+GROUP_SEC_TAG, GROUP_ELE_TAG, GROUP_GROUND_NODE = 2, 500, 500
+
+
+def build_group_model():
+    """The same 3D connection as ONE element, via BoltGroupSection2d -- the
+    3D counterpart of HankinsonDowelGroup.build_group_model().
+
+    The group plane is placed entirely by the element's '-orient' (local x
+    along the grain, local y' in-plane perpendicular); the fastener offsets
+    inside the section are always expressed in that local frame. Nothing
+    else about the section is 3D-aware: it still reports {P, Vy, Mz}, so
+    Uz/Rx/Ry still get no stiffness from anywhere and must be restrained,
+    exactly as in build_model() above.
+
+    Two things the hand-built model needs and this one does not: there are
+    no rigidLink constraints, so 'Transformation' is safe again (see
+    apply_normal_force()'s note on why it is not, above), and the model has
+    3 free DOF instead of 9 nodes' worth plus 9 constraints.
+
+    Returns (ele_tag, coords).
+    """
+    ops.wipe()
+    ops.model('basic', '-ndm', 3, '-ndf', 6)
+
+    hdg2d.saws_dowel_type(DOWEL_MAT, hdg2d.F0_0, hdg2d.K0_0, hdg2d.K1_0)
+    ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
+                '-param', 'F0', hdg2d.F0_0, hdg2d.F0_90,
+                '-param', 'S0', hdg2d.K0_0, hdg2d.K0_90,
+                '-param', 'K1', hdg2d.K1_0, hdg2d.K1_90)
+    ops.section('BoltGroupSection2d', GROUP_SEC_TAG, '-section', SEC_TAG,
+                '-grid', hdg2d.N_ROWS, hdg2d.N_COLUMNS, hdg2d.A1, hdg2d.A2)
+
+    ops.node(GROUP_GROUND_NODE, 0.0, 0.0, 0.0)
+    ops.fix(GROUP_GROUND_NODE, 1, 1, 1, 1, 1, 1)
+    ops.node(MASTER_NODE, 0.0, 0.0, 0.0)
+    ops.element('zeroLengthSection', GROUP_ELE_TAG,
+                GROUP_GROUND_NODE, MASTER_NODE, GROUP_SEC_TAG,
+                '-orient', 1, 0, 0, 0, 1, 0)
+    ops.fix(MASTER_NODE, 0, 0, 1, 1, 1, 0)
+
+    coords = hdg2d.dowel_coordinates_rp(hdg2d.N_ROWS, hdg2d.N_COLUMNS,
+                                         hdg2d.A1, hdg2d.A2, hdg2d.A3, hdg2d.A4)
+    return GROUP_ELE_TAG, coords
+
+
 def apply_normal_force(n_target, pattern_tag=5, n_steps=10):
     """Ramp a constant axial preload N (global/local x = parallel-to-grain,
     per build_dowel_group_3d's '-orient 1 0 0 0 1 0') onto the master node,
@@ -269,9 +314,24 @@ if __name__ == '__main__':
         have_plt = False
         print("\nmatplotlib not available -- skipping plots.\n")
 
+    # Same cross-check as the 2D example: the single-element group and the
+    # 9-element + rigidLink model are the same mechanics.
+    build_model()
+    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
+    phi_multi = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
+    build_group_model()
+    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
+    phi_single = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
+    print("cross-check at N = %.0f kN: phi(9 elements + rigidLink) = %.12e"
+          % (NORMAL_FORCE_LEVELS[-1], phi_multi))
+    print("                            phi(1 BoltGroupSection2d)  = %.12e"
+          % phi_single)
+    print("                            difference                 = %.3e\n"
+          % abs(phi_multi - phi_single))
+
     curves = {}
     for i, n_val in enumerate(NORMAL_FORCE_LEVELS):
-        dowels = build_model()
+        ele_tag, coords = build_group_model()
         if n_val:
             apply_normal_force(n_val)
         m_hist, phi_hist = push_moment(m_target=M_TARGET, n_steps=80)
@@ -285,13 +345,18 @@ if __name__ == '__main__':
               % (n_val, m_hist[i_mid], k_mid, m_hist[-1], k_final))
 
         if have_plt:
-            plot_dowel_group_3d(dowels, ax=axes[i], title="N = %.0f kN" % n_val)
+            # the 2D plotter reads the group section's own 'boltForces', which
+            # is dimension-agnostic -- unlike plot_dowel_group_3d(), which has
+            # to unpack 6-component nodal reactions
+            hdg2d.plot_bolt_group(ele_tag, coords, ax=axes[i],
+                                  title="N = %.0f kN" % n_val)
 
     if have_plt:
-        fig.suptitle("3x3 dowel group in a 3D model (ndm=3, ndf=6): force "
-                      "transfer under varying axial preload, at M = %.1f kN.m"
-                      "\n(HankinsonSection2d + SAWSMaterial, -paramHankinson; "
-                      "out-of-plane DOFs fixed at the master node)" % M_TARGET)
+        fig.suptitle("3x3 dowel group as ONE element in a 3D model (ndm=3, "
+                      "ndf=6): force transfer under varying axial preload, at "
+                      "M = %.1f kN.m\n(BoltGroupSection2d over a "
+                      "HankinsonSection2d prototype; out-of-plane DOFs fixed "
+                      "at the master node)" % M_TARGET)
         fig.tight_layout()
 
         fig2, ax2 = plt.subplots(figsize=(6.5, 5))

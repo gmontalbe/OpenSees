@@ -32,6 +32,7 @@ OBJS       = SectionForceDeformation.o \
 	McftSection2dfiber.o \
 	ASDCoupledHinge3D.o \
 	HankinsonSection2d.o \
+	BoltGroupSection2d.o \
 	LayeredShellFiberSection.o \
 	LayeredShellFiberSectionThermal.o \
 	FiberSection3dThermal.o \

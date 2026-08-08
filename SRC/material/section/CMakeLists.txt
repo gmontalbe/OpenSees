@@ -30,6 +30,7 @@ target_sources(OPS_Material
     FiberSectionGJThermal.cpp    
     GenericSection1d.cpp
     HankinsonSection2d.cpp
+    BoltGroupSection2d.cpp
     Isolator2spring.cpp
     ASDCoupledHinge3D.cpp
     LayeredShellFiberSection.cpp
@@ -69,6 +70,7 @@ target_sources(OPS_Material
     FiberSectionGJThermal.h
     GenericSection1d.h
     HankinsonSection2d.h
+    BoltGroupSection2d.h
     Isolator2spring.h
     ASDCoupledHinge3D.h
     LayeredShellFiberSection.h

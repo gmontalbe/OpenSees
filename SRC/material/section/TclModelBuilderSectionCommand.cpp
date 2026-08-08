@@ -54,6 +54,7 @@ extern "C" int         OPS_ResetInputNoBuilder(ClientData clientData, Tcl_Interp
 #include <FiberSectionRepr.h>
 #include <ASDCoupledHinge3D.h>
 #include <HankinsonSection2d.h>
+#include <BoltGroupSection2d.h>
 
 #include <LayeredShellFiberSection.h> // Yuli Huang & Xinzheng Lu 
 
@@ -107,6 +108,7 @@ extern void *OPS_Bidirectional(void);
 extern void *OPS_Elliptical2(void);
 extern void *OPS_ASDCoupledHinge3D(void);
 extern void *OPS_HankinsonSection2d(void);
+extern void *OPS_BoltGroupSection2d(void);
 extern void *OPS_LayeredShellFiberSection(void);
 extern void *OPS_MembranePlateFiberSection(void);
 extern void *OPS_LayeredShellFiberSectionThermal(void);
@@ -352,6 +354,14 @@ TclModelBuilderSectionCommand (ClientData clientData, Tcl_Interp *interp, int ar
 
 	else if (strcmp(argv[1],"HankinsonSection2d") == 0 ) {
 		void* theMat = OPS_HankinsonSection2d();
+		if (theMat != 0)
+			theSection = (SectionForceDeformation*)theMat;
+		else
+			return TCL_ERROR;
+	}
+
+	else if (strcmp(argv[1],"BoltGroupSection2d") == 0 ) {
+		void* theMat = OPS_BoltGroupSection2d();
 		if (theMat != 0)
 			theSection = (SectionForceDeformation*)theMat;
 		else
