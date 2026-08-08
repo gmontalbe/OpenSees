@@ -229,7 +229,7 @@
 #include "MembranePlateFiberSection.h"
 #include "DoubleMembranePlateFiberSection.h"
 #include "Bidirectional.h"
-#include "HankinsonDowel2d.h"
+#include "HankinsonSection2d.h"
 #include "Elliptical2.h"
 #include "Isolator2spring.h"
 #include "LayeredShellFiberSection.h" // Yuli Huang & Xinzheng Lu 
@@ -2226,8 +2226,8 @@ FEM_ObjectBrokerAllClasses::getNewSection(int classTag)
 
 	case SEC_TAG_Bidirectional:
 		return new Bidirectional();
-	case SEC_TAG_HankinsonDowel2d:
-		return new HankinsonDowel2d();
+	case SEC_TAG_HankinsonSection2d:
+		return new HankinsonSection2d();
 	case SEC_TAG_Elliptical2:
 		return new Elliptical2();
     case SEC_TAG_Isolator2spring:

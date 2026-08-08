@@ -70,16 +70,25 @@ class SAWSMaterial : public UniaxialMaterial
 	       FEM_ObjectBroker &theBroker);    
   
   void Print(OPS_Stream &s, int flag =0);
-  
+
+  int setParameter(const char **argv, int argc, Parameter &param);
+  int updateParameter(int parameterID, Information &info);
+
  protected:
-  
+
  private:
-  
+
   double F0;
   double FI;
   double DU;
   double S0;
-  double R1;
+  // K1 (= R1*S0, the post-yield/asymptotic stiffness) is stored directly,
+  // computed once from the constructor's R1 ratio, rather than keeping R1
+  // itself: setParameter/updateParameter expose K1 so it can be mutated
+  // (e.g. by HankinsonSection2d's parameter-level Hankinson interpolation)
+  // independently of whatever order S0 is also being mutated in -- see
+  // DowelType::setParameter for the identical reasoning.
+  double K1;
   double R2;
   double R3;
   double R4;

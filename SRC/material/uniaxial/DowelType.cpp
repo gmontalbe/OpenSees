@@ -482,7 +482,7 @@ DowelType::~DowelType()
 // envelope types, since these only depend on kp/fi/dyield through the
 // already envType-aware envelope()/envIntersection() calls). Called once
 // from the exponential ctor and again from updateParameter() whenever a
-// shape parameter is mutated at runtime (e.g. by HankinsonDowel2d's
+// shape parameter is mutated at runtime (e.g. by HankinsonSection2d's
 // parameter-level Hankinson interpolation between a 0-deg and a 90-deg
 // calibration of this material).
 void DowelType::setDerivedProperties(void)
@@ -1669,7 +1669,7 @@ DowelType::updateParameter(int parameterID, Information &info)
     // tTangent -- mutating the envelope mid-analysis while history points
     // (cDmax/cDmin/cFdmax/cFdmin, ePHC/eFHC) still refer to the old envelope
     // is inherent to any runtime-mutable hysteretic law; the caller (e.g.
-    // HankinsonDowel2d) is responsible for re-syncing the trial state after
+    // HankinsonSection2d) is responsible for re-syncing the trial state after
     // a batch of parameter updates if it needs to.
     this->setDerivedProperties();
 

@@ -86,7 +86,7 @@ class DowelType : public UniaxialMaterial
         FEM_ObjectBroker &theBroker);
     void Print(OPS_Stream &s, int flag =0);
 
-    // Runtime parameter access, e.g. for HankinsonDowel2d's parameter-level
+    // Runtime parameter access, e.g. for HankinsonSection2d's parameter-level
     // Hankinson interpolation between a 0-deg and a 90-deg calibration.
     // Only the -exponential envelope's shape parameters (F0/K0/K1/Dc/Kd) are
     // mutable; Fi/Kp/Dy are mutable for every envelope type.

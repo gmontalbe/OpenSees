@@ -372,7 +372,7 @@
 #define SEC_TAG_CreepSection 38
 #define SEC_TAG_ASDCoupledHinge3D 39
 #define SEC_TAG_PipeSection 40
-#define SEC_TAG_HankinsonDowel2d 41
+#define SEC_TAG_HankinsonSection2d 41
 
 #define SEC_TAG_MCFTFiberSection2d 7601
 

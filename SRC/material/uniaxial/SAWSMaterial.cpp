@@ -40,6 +40,8 @@
 #include <float.h>
 #include <Channel.h>
 #include <classTags.h>
+#include <Information.h>
+#include <Parameter.h>
 
 #include <elementAPI.h>
 #define OPS_Export 
@@ -93,8 +95,8 @@ SAWSMaterial::SAWSMaterial(int tag,
 			   double f0, double fI, double dU, double s0,
 			   double r1, double r2, double r3, double r4,
 			   double A, double B):
-UniaxialMaterial(tag, MAT_TAG_SAWSMaterial), 
-F0(f0), FI(fI), DU(dU), S0(s0), R1(r1), R2(r2), R3(r3), R4(r4),
+UniaxialMaterial(tag, MAT_TAG_SAWSMaterial),
+F0(f0), FI(fI), DU(dU), S0(s0), K1(r1*s0), R2(r2), R3(r3), R4(r4),
 ALPHA(A), BETA(B)
 {
   
@@ -108,8 +110,8 @@ ALPHA(A), BETA(B)
 
 
 SAWSMaterial::SAWSMaterial()
-  :UniaxialMaterial(0, MAT_TAG_SAWSMaterial), 
-   F0(0.0), FI(0.0), DU(0.0), S0(0.0), R1(0.0), R2(0.0), R3(0.0), R4(0.0),
+  :UniaxialMaterial(0, MAT_TAG_SAWSMaterial),
+   F0(0.0), FI(0.0), DU(0.0), S0(0.0), K1(0.0), R2(0.0), R3(0.0), R4(0.0),
    ALPHA(0.0), BETA(0.0)
 {
   //TOL    = 1.0E-6 ;  //  Tolerance for bi-section search.
@@ -174,7 +176,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
 
   // Determine ultimate force FU, corresponding to DU.
 
-  FAC1 = F0 + (R1 * S0 * DU);
+  FAC1 = F0 + (K1 * DU);
   FAC2 = 1.0 - exp(-S0*DU/F0);
   FU = FAC1 * FAC2;
 
@@ -209,11 +211,11 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
   if (IMODE ==  2) {
     if (DISPL >= 0.0) {
       if  (DISPL <= DU) {
-	FAC1 = F0 + (R1 * S0 * fabs(DISPL));
+	FAC1 = F0 + (K1 * fabs(DISPL));
 	FAC2 = 1.0 - exp(-S0*fabs(DISPL)/F0);
 	FAC3 = 1 - FAC2;
 	FORCE = FAC1 * FAC2;
-	STIFF = (FAC1 * (S0/F0) * FAC3) + (R1 * S0 * FAC2);
+	STIFF = (FAC1 * (S0/F0) * FAC3) + (K1 * FAC2);
 	return 0;
       } else if  (DISPL > DU) {
 	D0 = DU - (FU/(R2*S0));
@@ -231,11 +233,11 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
     } else if (DISPL <  0.0) {
 
       if (DISPL >= -DU) {
-	FAC1 = F0 + (R1 * S0 * fabs(DISPL));
+	FAC1 = F0 + (K1 * fabs(DISPL));
 	FAC2 = 1.0 - exp(-S0*fabs(DISPL)/F0);
 	FAC3 = 1 - FAC2;
 	FORCE = -FAC1 * FAC2;
-	STIFF = (FAC1 * (S0/F0) * FAC3) + (R1 * S0 * FAC2);
+	STIFF = (FAC1 * (S0/F0) * FAC3) + (K1 * FAC2);
 	return 0;
       } else if (DISPL < -DU) {
 	D0 = (FU/(R2*S0)) - DU;
@@ -269,7 +271,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
   while ( fabs(DIFF) > TOL ) {
     //10 DINT2 = (DA + DB) / 2.0D0;
     DINT2 = (DA + DB) / 2.0;
-    FAC1 = F0 + (R1 * S0 * fabs(DINT2));
+    FAC1 = F0 + (K1 * fabs(DINT2));
     FAC2 = 1.0 - exp(-S0*fabs(DINT2)/F0);
     FAC3 = FI + (R4 * S0 * DINT2);
     DIFF = (FAC1 * FAC2) - FAC3;
@@ -322,22 +324,22 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
       
       if ( (DISPL >= 0.0) && (DISPL <= DLIM)) {
 	
-	FAC1 = F0 + (R1 * S0 * fabs(DISPL));
+	FAC1 = F0 + (K1 * fabs(DISPL));
 	FAC2 = 1.0 - exp(-S0*fabs(DISPL)/F0);
 	FAC3 = 1 - FAC2;
 	FORCE = FAC1 * FAC2;
-	STIFF = (FAC1 * (S0/F0) * FAC3) + (R1 * S0 * FAC2);
+	STIFF = (FAC1 * (S0/F0) * FAC3) + (K1 * FAC2);
 	DOLD = DISPL;
 	foundStateFlag = 1;
 	return 0;
 	
       } else if  ( (DISPL < 0.0) && (DISPL >= (-DLIM)) ) {
 	
-	FAC1 = F0 + (R1 * S0 * fabs(DISPL));
+	FAC1 = F0 + (K1 * fabs(DISPL));
 	FAC2 = 1.0 - exp(-S0*fabs(DISPL)/F0);
 	FAC3 = 1 - FAC2;
 	FORCE = -FAC1 * FAC2;
-	STIFF = (FAC1 * (S0/F0) * FAC3) + (R1 * S0 * FAC2);
+	STIFF = (FAC1 * (S0/F0) * FAC3) + (K1 * FAC2);
 	DOLD = DISPL;
 	foundStateFlag = 1;
 	return 0;
@@ -362,7 +364,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
 	
 	if (fabs(DISPL) >= fabs(DOLD)) {
 	  
-	  FAC1 = F0 + (R1 * S0 * fabs(DISPL));
+	  FAC1 = F0 + (K1 * fabs(DISPL));
 	  FAC2 = 1.0 - exp(-S0*fabs(DISPL)/F0);
 	  FAC3 = 1 - FAC2;
 	  
@@ -373,7 +375,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
 	    DUNP = DISPL;
 	    FUNP = FORCE;
 	    DMAXP = BETA * DUNP;
-	    FAC1 = F0 + (R1 * S0 * DMAXP);
+	    FAC1 = F0 + (K1 * DMAXP);
 	    FAC2 = 1.0 - exp(-S0*DMAXP/F0);
 	    FMAXP = FAC1 * FAC2;
 	    
@@ -390,7 +392,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
 	    DUNM = DISPL;
 	    FUNM = FORCE;
 	    DMAXM = BETA * DUNM;
-	    FAC1 = F0 + (R1 * S0 * fabs(DMAXM));
+	    FAC1 = F0 + (K1 * fabs(DMAXM));
 	    FAC2 = 1.0 - exp(-S0*fabs(DMAXM)/F0);
 	    FMAXM = -FAC1 * FAC2;
 	    
@@ -402,7 +404,7 @@ SAWSMaterial::setTrialStrain(double strain, double strainRate)
 
 	  }
 	  
-	  STIFF = (FAC1 * (S0/F0) * FAC3) + (R1 * S0 * FAC2);
+	  STIFF = (FAC1 * (S0/F0) * FAC3) + (K1 * FAC2);
 	  DOLD = DISPL;
 	  LPPREV = 2;
 	  foundStateFlag = 1;
@@ -1230,10 +1232,11 @@ UniaxialMaterial*
 SAWSMaterial::getCopy(void)
 {
   SAWSMaterial *theCopy = new SAWSMaterial (this->getTag(),
-					    F0, FI, DU, S0, 
-					    R1, R2, R3, R4,
+					    F0, FI, DU, S0,
+					    (S0 != 0.0 ? K1/S0 : 0.0), R2, R3, R4,
 					    ALPHA, BETA );
-  
+  theCopy->K1 = K1;   // exact, bypassing the R1*S0 round-trip above
+
   theCopy->cDISPL  = cDISPL;
   theCopy->cFORCE  = cFORCE;
   theCopy->cSTIFF  = cSTIFF;
@@ -1266,7 +1269,7 @@ SAWSMaterial::sendSelf(int commitTag, Channel &theChannel)
   dataVec(2) = FI;
   dataVec(3) = DU;
   dataVec(4) = S0;
-  dataVec(5) = R1;
+  dataVec(5) = K1;
   dataVec(6) = R2;
   dataVec(7) = R3;
   dataVec(8) = R4;
@@ -1319,7 +1322,7 @@ SAWSMaterial::recvSelf(int commitTag, Channel &theChannel,
     FI      = dataVec(2);
     DU      = dataVec(3);
     S0      = dataVec(4);
-    R1      = dataVec(5);
+    K1      = dataVec(5);
     R2      = dataVec(6);
     R3      = dataVec(7);
     R4      = dataVec(8);
@@ -1363,12 +1366,97 @@ SAWSMaterial::Print(OPS_Stream &s, int flag)
 	s << "FI: " << FI << endln;
 	s << "DU: " << DU << endln;
 	s << "S0: " << S0 << endln;
-	s << "R1: " << R1 << endln;
+	s << "K1: " << K1 << " (R1: " << (S0 != 0.0 ? K1/S0 : 0.0) << ")" << endln;
 	s << "R2: " << R2 << endln;
 	s << "R3: " << R3 << endln;
 	s << "R4: " << R4 << endln;
 	s << "ALPHA: " << ALPHA << endln;
 	s << "BETA: " << BETA << endln;
 
+}
+
+int
+SAWSMaterial::setParameter(const char **argv, int argc, Parameter &param)
+{
+  if (argc < 1)
+    return -1;
+
+  if (strcmp(argv[0], "F0") == 0) {
+    param.setValue(F0);
+    return param.addObject(1, this);
+  }
+  if (strcmp(argv[0], "FI") == 0) {
+    param.setValue(FI);
+    return param.addObject(2, this);
+  }
+  if (strcmp(argv[0], "DU") == 0) {
+    param.setValue(DU);
+    return param.addObject(3, this);
+  }
+  if (strcmp(argv[0], "S0") == 0) {
+    param.setValue(S0);
+    return param.addObject(4, this);
+  }
+  // K1 (= R1*S0, the post-yield/asymptotic stiffness) is exposed directly
+  // rather than only through R1 -- see DowelType::setParameter for why:
+  // Hankinson-interpolating R1 and S0 separately does not give the same
+  // result as interpolating K1 itself (the product of two harmonic means is
+  // not the harmonic mean of the products), and this is exactly what
+  // HankinsonSection2d's parameter-level mode relies on.
+  if (strcmp(argv[0], "K1") == 0) {
+    param.setValue(K1);
+    return param.addObject(5, this);
+  }
+  if (strcmp(argv[0], "R2") == 0) {
+    param.setValue(R2);
+    return param.addObject(6, this);
+  }
+  if (strcmp(argv[0], "R3") == 0) {
+    param.setValue(R3);
+    return param.addObject(7, this);
+  }
+  if (strcmp(argv[0], "R4") == 0) {
+    param.setValue(R4);
+    return param.addObject(8, this);
+  }
+  if (strcmp(argv[0], "ALPHA") == 0) {
+    param.setValue(ALPHA);
+    return param.addObject(9, this);
+  }
+  if (strcmp(argv[0], "BETA") == 0) {
+    param.setValue(BETA);
+    return param.addObject(10, this);
+  }
+
+  return -1;
+}
+
+int
+SAWSMaterial::updateParameter(int parameterID, Information &info)
+{
+  switch (parameterID) {
+  case 1:  F0    = info.theDouble; break;
+  case 2:  FI    = info.theDouble; break;
+  case 3:  DU    = info.theDouble; break;
+  case 4:  S0    = info.theDouble; break;
+  case 5:  K1    = info.theDouble; break;
+  case 6:  R2    = info.theDouble; break;
+  case 7:  R3    = info.theDouble; break;
+  case 8:  R4    = info.theDouble; break;
+  case 9:  ALPHA = info.theDouble; break;
+  case 10: BETA  = info.theDouble; break;
+  default:
+    return -1;
+  }
+
+  // Unlike DowelType there are no cached/derived quantities to recompute
+  // here: FU, DF1, DF2, DF, DINT... are all recomputed fresh from
+  // F0/FI/DU/S0/K1/R2/R3/R4 at the top of every setTrialStrain() call, so
+  // nothing further needs to happen for the new values to take effect. As
+  // with DowelType, this deliberately does not commit or otherwise re-sync
+  // FORCE/STIFF; the caller (e.g. HankinsonSection2d) is responsible for
+  // re-syncing the trial state after a batch of parameter updates if it
+  // needs to.
+  return 0;
 }
 

@@ -1,31 +1,33 @@
-"""Verification tests for the HankinsonDowel2d coupled section.
+"""Verification tests for the HankinsonSection2d coupled section.
 
-HankinsonDowel2d implements the Schweigler et al. modelling approach for the
+HankinsonSection2d implements the Schweigler et al. modelling approach for the
 M-N-V interaction of timber dowel-type connections: a dowel's 2-D in-plane
 slip is Hankinson-interpolated (n = 2) between a 0-degree and a 90-degree
 material calibration, using an evolving load-to-grain angle alpha that is a
 state variable of the current slip direction (see SRC/material/section/
-HankinsonDowel2d.h for the full design notes). Two interpolation modes are
-tested: response-level (-responseHankinson, two independent UniaxialMaterial
-copies blended) and parameter-level (-paramHankinson, one material whose
-named parameters are re-interpolated at every commit -- the literal
-Schweigler formulation, exercised here via DowelType's Foschi envelope,
-which was extended with setParameter/updateParameter for exactly this
-purpose).
+HankinsonSection2d.h for the full design notes).
+
+This is parameter-level interpolation only (-paramHankinson): one material
+whose named parameters are re-interpolated between 0-deg and 90-deg values
+and pushed into it (via setParameter/updateParameter) at every commit -- the
+literal Schweigler formulation. Exercised here via DowelType's Foschi
+envelope, SAWSMaterial's (identical) Foschi envelope, Steel01 and
+ElasticMaterial -- all extended with setParameter/updateParameter for
+exactly this purpose. An earlier response-level blending mode
+(-responseHankinson, two independent materials whose scalar force responses
+were blended) was removed: it had no clear physical basis (see
+HankinsonSection2d.h for the reasoning) and is not part of this class anymore.
 
 All rigs use a 2D model (ndm=2, ndf=3) with a zeroLengthSection element:
 node 1 fully fixed, node 2 free in-plane (dof 3, the unused rotation, is
-fixed since HankinsonDowel2d's default response codes are {P, Vy}).
+fixed since HankinsonSection2d's default response codes are {P, Vy}).
 
 Scope note: several tests intentionally stay in the monotonic / mildly
 cyclic regime. Driving a post-yield hysteretic material through a reversal
 under load control is a well known Newton-robustness edge case in OpenSees
 generally (confirmed here to fail identically for a plain zeroLength+Steel01
-rig with no HankinsonDowel2d involved at all) -- exercising that robustness
-is not what these tests are for. The regularization used to keep the Mode B
-Hankinson blend finite when the two calibrations' forces have opposite sign
-is instead checked directly against the closed-form formula in pure Python
-(no FE model needed).
+rig with no HankinsonSection2d involved at all) -- exercising that robustness
+is not what these tests are for.
 """
 
 try:
@@ -63,8 +65,17 @@ def _ramp_load(ang_deg, n_steps, fx=1.0):
         assert ok == 0, "analyze failed at step %d (angle %s)" % (i, ang_deg)
 
 
+def _dowel_type_exponential(tag):
+    """A DowelType material with the Schweigler 0-deg Foschi envelope, used
+    as the Mode A driven material in several rigs below (its F0p/K0p/K1p
+    parameters are what HankinsonSection2d re-interpolates)."""
+    ops.uniaxialMaterial('DowelType', tag, 5.0, 200.0, 0.8, 0.2, 0.6, 0.9,
+                          0.5, 2.0, 0.8, 0.9, 0.9,
+                          '-exponential', 24460.0, 462.0 / 24460.0, 19.1, 0.05, 5000.0)
+
+
 # ---------------------------------------------------------------------
-# 1. Closed-form Hankinson interpolation (Mode A, elastic material)
+# 1. Closed-form Hankinson interpolation (elastic material)
 # ---------------------------------------------------------------------
 
 def test_hankinson_closed_form_elastic():
@@ -77,7 +88,7 @@ def test_hankinson_closed_form_elastic():
     for ang in (0, 15, 30, 45, 60, 75, 90):
         _fresh_2node()
         ops.uniaxialMaterial('Elastic', 1, E0)
-        ops.section('HankinsonDowel2d', 1, '-paramHankinson', 1,
+        ops.section('HankinsonSection2d', 1, '-paramHankinson', 1,
                      '-param', 'E', E0, E90)
         ops.element('zeroLengthSection', 1, 1, 2, 1, '-orient', 1, 0, 0)
         _ramp_load(ang, 150)
@@ -94,26 +105,33 @@ def test_hankinson_closed_form_elastic():
 
 
 # ---------------------------------------------------------------------
-# 2. Consistent tangent (Mode B): analytic kb must equal a true FD probe
+# 2. Consistent tangent: analytic kb must equal a true FD probe
 # ---------------------------------------------------------------------
 
 def test_tangent_matches_finite_difference():
     """The section's reported 2x2 tangent must be the true derivative of its
-    force w.r.t. deformation. Ramp a hysteretic (post-yield) Steel01 pair to
+    force w.r.t. deformation. Ramp a hysteretic (post-yield) DowelType rig to
     a converged, committed state, freeze that load with loadConst, read the
     analytic tangent, then apply one tiny additional load increment and
     verify K_analytic @ delta_e reproduces the applied delta_P. This is
-    exactly the check that would catch CoupledZeroLength's known defect: an
-    incomplete tangent (missing the radial g*(I-n(x)n) term, or the wrong
-    sign of g on a reversed branch)."""
+    exactly the check that would catch an incomplete tangent (missing the
+    radial g*(I-n(x)n) term, or the wrong sign of g on a reversed branch) --
+    the known defect CoupledZeroLength ships with."""
     _fresh_2node()
-    ops.uniaxialMaterial('Steel01', 1, 15.0, 24460.0, 0.02)
-    ops.uniaxialMaterial('Steel01', 2, 10.0, 19640.0, 0.05)
-    ops.section('HankinsonDowel2d', 1, '-responseHankinson', 1, 2)
+    _dowel_type_exponential(10)
+    ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
+                '-param', 'F0p', 19.1, 14.18,
+                '-param', 'K0p', 24460.0, 19640.0,
+                '-param', 'K1p', 462.0, 739.0)
     ops.element('zeroLengthSection', 1, 1, 2, 1, '-orient', 1, 0, 0)
 
+    # _ramp_load has no explicit fractional LoadControl increment, so each
+    # analyze(1) call re-applies the full pattern (cumulative load after
+    # n_steps is fx*n_steps, not fx) -- fx here is chosen so that product
+    # lands comfortably between yield onset (~16.5 kN blended at 35 deg) and
+    # the envelope cap (~35-40 kN blended), not literally "20 kN".
     ang = 35.0
-    _ramp_load(ang, 60, fx=20.0)
+    _ramp_load(ang, 60, fx=0.5)
     ops.loadConst('-time', 0.0)
 
     d0 = ops.nodeDisp(2)
@@ -144,13 +162,18 @@ def test_radial_term_present():
     transverse stiffness must equal the secant modulus F/s, and must not be
     zero."""
     _fresh_2node()
-    ops.uniaxialMaterial('Steel01', 1, 15.0, 24460.0, 0.02)
-    ops.uniaxialMaterial('Steel01', 2, 15.0, 24460.0, 0.02)
-    ops.section('HankinsonDowel2d', 1, '-responseHankinson', 1, 2)
+    _dowel_type_exponential(10)
+    ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
+                '-param', 'F0p', 19.1, 14.18,
+                '-param', 'K0p', 24460.0, 19640.0,
+                '-param', 'K1p', 462.0, 739.0)
     ops.element('zeroLengthSection', 1, 1, 2, 1, '-orient', 1, 0, 0)
 
-    # Pure axial (alpha = 0 throughout -- no ramp needed to "discover" it).
-    _ramp_load(0.0, 40, fx=25.0)
+    # Pure axial (alpha = 0 throughout -- no ramp needed to "discover" it),
+    # well past F0 = 19.1 so the material is on the yielded branch. (See the
+    # comment in test_tangent_matches_finite_difference on why fx*n_steps,
+    # not fx, is the actual cumulative applied force here.)
+    _ramp_load(0.0, 40, fx=0.6)
 
     F = ops.eleResponse(1, 'basicForce')
     d = ops.nodeDisp(2)
@@ -174,8 +197,8 @@ def test_sign_rule_elastic_reversal():
     _fresh_2node()
     E0 = 24460.0
     ops.uniaxialMaterial('Elastic', 1, E0)
-    ops.uniaxialMaterial('Elastic', 2, E0)
-    ops.section('HankinsonDowel2d', 1, '-responseHankinson', 1, 2)
+    ops.section('HankinsonSection2d', 1, '-paramHankinson', 1,
+                '-param', 'E', E0, E0)
     ops.element('zeroLengthSection', 1, 1, 2, 1, '-orient', 1, 0, 0)
 
     def frange(a, b, n):
@@ -201,15 +224,13 @@ def test_sign_rule_elastic_reversal():
 
 
 # ---------------------------------------------------------------------
-# 4. Alpha converges to the true load angle (Mode A, hysteretic DowelType)
+# 4. Alpha converges to the true load angle (hysteretic DowelType)
 # ---------------------------------------------------------------------
 
 def test_alpha_converges_to_load_angle():
     _fresh_2node()
-    ops.uniaxialMaterial('DowelType', 10, 5.0, 200.0, 0.8, 0.2, 0.6, 0.9,
-                          0.5, 2.0, 0.8, 0.9, 0.9,
-                          '-exponential', 24460.0, 462.0 / 24460.0, 19.1, 0.05, 5000.0)
-    ops.section('HankinsonDowel2d', 1, '-paramHankinson', 10,
+    _dowel_type_exponential(10)
+    ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
                 '-param', 'F0p', 19.1, 14.18,
                 '-param', 'K0p', 24460.0, 19640.0,
                 '-param', 'K1p', 462.0, 739.0)
@@ -222,7 +243,7 @@ def test_alpha_converges_to_load_angle():
 
 
 # ---------------------------------------------------------------------
-# 5. Mode A reproduces the exact Schweigler Foschi + Hankinson formula
+# 5. Reproduces the exact Schweigler Foschi + Hankinson formula
 # ---------------------------------------------------------------------
 
 def _foschi(disp, f0, kf, ki):
@@ -235,10 +256,10 @@ def _hankinson(x0, x90, w):
 
 
 def test_foschi_hankinson_matches_closed_form():
-    """Mode A + DowelType's -exponential envelope is exactly the Python
-    reference's slipCurve (F0/K0/K1 <-> F0/ki/kf). Reproduce the reference
-    formula's own Hankinson interpolation at several angles and check the
-    element's force matches the closed-form Foschi-at-X_alpha value."""
+    """DowelType's -exponential envelope is exactly the Python reference's
+    slipCurve (F0/K0/K1 <-> F0/ki/kf). Reproduce the reference formula's own
+    Hankinson interpolation at several angles and check the element's force
+    matches the closed-form Foschi-at-X_alpha value."""
     F0_0, KF_0, KI_0 = 19.1, 462.0, 24460.0
     F0_9, KF_9, KI_9 = 14.18, 739.0, 19640.0
 
@@ -247,7 +268,7 @@ def test_foschi_hankinson_matches_closed_form():
         ops.uniaxialMaterial('DowelType', 10, 5.0, 200.0, 0.8, 0.2, 0.6, 0.9,
                               0.5, 2.0, 0.8, 0.9, 0.9,
                               '-exponential', KI_0, KF_0 / KI_0, F0_0, 0.05, 5000.0)
-        ops.section('HankinsonDowel2d', 1, '-paramHankinson', 10,
+        ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
                     '-param', 'F0p', F0_0, F0_9,
                     '-param', 'K0p', KI_0, KI_9,
                     '-param', 'K1p', KF_0, KF_9)
@@ -273,107 +294,64 @@ def test_foschi_hankinson_matches_closed_form():
         assert isclose(fmag, f_expect, rel_tol=1e-8), ang
 
 
-# ---------------------------------------------------------------------
-# 6. Calibration angles are reproduced exactly by the Mode B blend
-# ---------------------------------------------------------------------
+def test_saws_hankinson_matches_closed_form():
+    """SAWSMaterial's monotonic envelope (LPATH==1, first loading) is the
+    identical Foschi curve, F0/K1<->F0/kf and S0<->ki -- confirmed directly
+    against SAWSMaterial.cpp's setTrialStrain(). Same check as
+    test_foschi_hankinson_matches_closed_form but driving SAWSMaterial's own
+    setParameter/updateParameter (F0/S0/K1) instead of DowelType's, i.e. the
+    worked example's actual material (EXAMPLES/ExamplePython/
+    HankinsonDowelGroup.py)."""
+    F0_0, KF_0, KI_0 = 19.1, 462.0, 24460.0
+    F0_9, KF_9, KI_9 = 14.18, 739.0, 19640.0
 
-def test_calibration_angles_exact():
-    """At alpha = 0 or alpha = 90 the regularized Hankinson blend must
-    collapse to exactly mat0 or mat90's own response (the blend's defining
-    property, per the closed-form check: at w=0, H = F0*F90/F90 = F0 and
-    L = F0, for ANY confidence beta)."""
-    for pure_angle, tag_expected in ((0.0, 1), (90.0, 2)):
+    for ang in (0, 15, 30, 45, 60, 75, 90):
         _fresh_2node()
-        ops.uniaxialMaterial('Steel01', 1, 15.0, 24460.0, 0.02)
-        ops.uniaxialMaterial('Steel01', 2, 10.0, 19640.0, 0.05)
-        ops.section('HankinsonDowel2d', 1, '-responseHankinson', 1, 2)
+        # DU large enough that the failure displacement DF never bites at
+        # the small probe displacements this test stays within.
+        ops.uniaxialMaterial('SAWS', 10, F0_0, 0.1 * F0_0, 0.05, KI_0,
+                              KF_0 / KI_0, -0.05, 1.0, 0.0, 0.8, 1.05)
+        ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
+                    '-param', 'F0', F0_0, F0_9,
+                    '-param', 'S0', KI_0, KI_9,
+                    '-param', 'K1', KF_0, KF_9)
         ops.element('zeroLengthSection', 1, 1, 2, 1, '-orient', 1, 0, 0)
-        _ramp_load(pure_angle, 40, fx=25.0)
+
+        _ramp_load(ang, 25, fx=1.0)
 
         d = ops.nodeDisp(2)
         f = ops.eleResponse(1, 'basicForce')
         delta = hypot(d[0], d[1])
         fmag = hypot(f[0], f[1])
 
-        # Independent reference: drive a bare copy of the expected material.
-        ops.wipe()
-        Fy, E, b = ((15.0, 24460.0, 0.02) if tag_expected == 1
-                    else (10.0, 19640.0, 0.05))
-        ops.uniaxialMaterial('Steel01', 99, Fy, E, b)
-        ops.testUniaxialMaterial(99)
-        ops.setStrain(delta)
-        f_ref = ops.getStress()
+        w = sin(radians(ang)) ** 2
+        f0 = _hankinson(F0_0, F0_9, w)
+        kf = _hankinson(KF_0, KF_9, w)
+        ki = _hankinson(KI_0, KI_9, w)
+        f_expect = _foschi(delta, f0, kf, ki)
 
-        assert isclose(fmag, f_ref, rel_tol=1e-9, abs_tol=1e-9)
+        assert isclose(fmag, f_expect, rel_tol=1e-8), ang
 
 
 # ---------------------------------------------------------------------
-# 7. Mode B regularization: bounded and continuous, verified against the
-#    closed-form blend formula directly (no FE model needed)
-# ---------------------------------------------------------------------
-
-def _smoothstep(x):
-    if x <= 0.0:
-        return 0.0
-    if x >= 1.0:
-        return 1.0
-    return x * x * (3.0 - 2.0 * x)
-
-
-def _mode_b_blend(F0, F90, w, ftol):
-    """Pure-Python mirror of HankinsonDowel2d::evaluateLaw's Mode B force
-    blend (see HankinsonDowel2d.h/.cpp), used to check the regularization's
-    boundedness/continuity across the full (F0, F90, w) input space --
-    including the opposite-sign case that only arises transiently on a
-    hysteretic unloading branch and is impractical to reach reliably via a
-    load-controlled FE reversal (a Newton-robustness question, not a
-    property of this formula)."""
-    c2 = 1.0 - w
-    L = c2 * F0 + w * F90
-    D = c2 * F90 + w * F0
-    u0, u90 = F0 / ftol, F90 / ftol
-    beta = (_smoothstep(u0) * _smoothstep(u90)
-            + _smoothstep(-u0) * _smoothstep(-u90))
-    if beta <= 0.0 or D == 0.0:
-        return L
-    H = F0 * F90 / D
-    return beta * H + (1.0 - beta) * L
-
-
-def test_modeB_regularization_bounded_and_exact_at_calibration():
-    ftol = 0.1
-    import random
-    random.seed(0)
-    for _ in range(2000):
-        F0 = random.uniform(-20.0, 20.0)
-        F90 = random.uniform(-20.0, 20.0)
-        w = random.uniform(0.0, 1.0)
-        F = _mode_b_blend(F0, F90, w, ftol)
-        assert math.isfinite(F)
-        assert abs(F) <= max(abs(F0), abs(F90)) + 1.0e-9
-
-    # Exact at the calibration angles, for a range of ftol and even when
-    # F0/F90 disagree in sign (only F0 -- or only F90 -- can matter at w=0/1).
-    for ftol in (1.0e-6, 1.0e-2, 1.0, 100.0):
-        for F0, F90 in ((5.0, -3.0), (-5.0, 3.0), (0.0, -3.0), (5.0, 0.0)):
-            assert isclose(_mode_b_blend(F0, F90, 0.0, ftol), F0, abs_tol=1e-12)
-            assert isclose(_mode_b_blend(F0, F90, 1.0, ftol), F90, abs_tol=1e-12)
-
-
-# ---------------------------------------------------------------------
-# 8. getCopy() independence
+# 6. getCopy() independence
 # ---------------------------------------------------------------------
 
 def test_getCopy_independence():
     """ZeroLengthSection copies the prototype section per element; loading
     one element into yield must not affect a second, unloaded element that
-    shares the same section tag (guards the Parameter-rebinding trap noted
-    in HankinsonDowel2d.h Sec. getCopy())."""
+    shares the same section tag. This is exactly the Parameter-rebinding
+    trap noted in HankinsonSection2d.h/getCopy(): a memberwise copy would
+    leave every element's bound Parameters pointing at the PROTOTYPE
+    material, so all elements sharing this section tag would silently
+    mutate one shared law."""
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
-    ops.uniaxialMaterial('Steel01', 1, 15.0, 24460.0, 0.02)
-    ops.uniaxialMaterial('Steel01', 2, 10.0, 19640.0, 0.05)
-    ops.section('HankinsonDowel2d', 1, '-responseHankinson', 1, 2)
+    _dowel_type_exponential(10)
+    ops.section('HankinsonSection2d', 1, '-paramHankinson', 10,
+                '-param', 'F0p', 19.1, 14.18,
+                '-param', 'K0p', 24460.0, 19640.0,
+                '-param', 'K1p', 462.0, 739.0)
 
     for i in (1, 2):
         ops.node(10 * i, 0, 0)
@@ -396,7 +374,7 @@ def test_getCopy_independence():
 
 
 # ---------------------------------------------------------------------
-# 9. DowelType setParameter/updateParameter
+# 7. DowelType / SAWSMaterial setParameter/updateParameter
 # ---------------------------------------------------------------------
 
 def test_dowel_type_setparameter():
@@ -438,6 +416,46 @@ def test_dowel_type_setparameter():
     # displacement (not the target probe) for an exact, solver-tolerance
     # independent check.
     f_at_converged = (F0_new + K1 * d[0]) * (1.0 - math.exp(-K0 * d[0] / F0_new))
+    f = ops.eleResponse(1, 'force')
+    assert isclose(f[3], f_at_converged, rel_tol=1e-9)
+    assert isclose(f[0], -f_at_converged, rel_tol=1e-9)
+
+
+def test_saws_setparameter():
+    """Same check as test_dowel_type_setparameter, but for SAWSMaterial's
+    F0/S0/K1 (mutating K1 directly, not R1 -- see SAWSMaterial::setParameter
+    for why): the monotonic envelope force at a fixed probe displacement
+    must match the analytic Foschi value with the new F0."""
+    ops.wipe()
+    ops.model('basic', '-ndm', 2, '-ndf', 3)
+    ops.node(1, 0, 0)
+    ops.fix(1, 1, 1, 1)
+    ops.node(2, 0, 0)
+    ops.fix(2, 0, 1, 1)
+
+    S0, K1, F0 = 24460.0, 462.0, 19.1
+    ops.uniaxialMaterial('SAWS', 10, F0, 0.1 * F0, 0.05, S0,
+                          K1 / S0, -0.05, 1.0, 0.0, 0.8, 1.05)
+    ops.element('zeroLength', 1, 1, 2, '-mat', 10, '-dir', 1)
+
+    ops.parameter(1, 'element', 1, 'F0')
+    F0_new = 30.0
+    ops.updateParameter(1, F0_new)
+
+    probe = 0.001
+    f_expect = (F0_new + K1 * probe) * (1.0 - math.exp(-S0 * probe / F0_new))
+
+    ops.timeSeries('Constant', 1)
+    ops.pattern('Plain', 1, 1)
+    ops.load(2, f_expect, 0.0, 0.0)
+    ops.analysis('Static', '-noWarnings')
+    ok = ops.analyze(1)
+    assert ok == 0
+
+    d = ops.nodeDisp(2)
+    assert isclose(d[0], probe, rel_tol=2e-2)
+
+    f_at_converged = (F0_new + K1 * d[0]) * (1.0 - math.exp(-S0 * d[0] / F0_new))
     f = ops.eleResponse(1, 'force')
     assert isclose(f[3], f_at_converged, rel_tol=1e-9)
     assert isclose(f[0], -f_at_converged, rel_tol=1e-9)

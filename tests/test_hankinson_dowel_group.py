@@ -1,8 +1,8 @@
-"""Verification tests for a timber dowel GROUP built out of HankinsonDowel2d
+"""Verification tests for a timber dowel GROUP built out of HankinsonSection2d
 sections -- as opposed to test_hankinson_dowel2d.py, which only ever
 exercises a single dowel (one zeroLengthSection at the origin).
 
-HankinsonDowel2d has no notion of a dowel group: it only ever sees one
+HankinsonSection2d has no notion of a dowel group: it only ever sees one
 dowel's 2-D in-plane slip. The group's geometry (how many dowels, their
 spacing, and therefore their lever arms about the connection's reference
 point) is assembled entirely with ordinary OpenSees node coordinates plus
@@ -10,7 +10,7 @@ rigidLink('beam', ...) tying each dowel's free node to a shared master node
 -- see EXAMPLES/ExamplePython/HankinsonDowelGroup.py, which this file
 imports its model-building helpers from. The M-N-V interaction of the whole
 connection then falls out of nodal equilibrium; there is no group-level
-bookkeeping inside HankinsonDowel2d/DowelType to test here.
+bookkeeping inside HankinsonSection2d/DowelType to test here.
 
 Geometry and calibration reproduce the 3x3 dowel connection of Schweigler et
 al.'s worked example (schweigler_implementation/MainAnalysis.py).
@@ -88,7 +88,7 @@ def test_group_initial_rotational_stiffness_matches_lever_arm_theory():
     """A tiny-moment ramp (deep in the pre-yield K0 regime) lets each
     dowel's lagged/committed Hankinson weight settle to its true
     rotation-consistent direction after a couple of steps (the same
-    committed-alpha lag documented in HankinsonDowel2d.h and exercised by
+    committed-alpha lag documented in HankinsonSection2d.h and exercised by
     test_hankinson_dowel2d.test_hankinson_closed_form_elastic's ramp). The
     resulting group rotational stiffness must then match the closed-form
     sum of each dowel's own Hankinson-blended K0 times its lever arm
@@ -112,7 +112,7 @@ def test_group_initial_rotational_stiffness_matches_lever_arm_theory():
 #    exactly balanced by the grounded dowels' reactions, at every step
 #    (including well into the yielded regime) -- this is what "the
 #    geometry/lever-arm/moment-assembly comes from the constraint plus
-#    equilibrium" (rather than anything inside HankinsonDowel2d) means
+#    equilibrium" (rather than anything inside HankinsonSection2d) means
 #    concretely.
 # ---------------------------------------------------------------------
 
@@ -165,10 +165,11 @@ def test_wider_spacing_increases_rotational_stiffness():
     def build_and_probe(a1, a2, a3, a4):
         ops.wipe()
         ops.model('basic', '-ndm', 2, '-ndf', 3)
-        hdg.saws_dowel_type(hdg.DOWEL_MAT_0, hdg.F0_0, hdg.K0_0, hdg.K1_0)
-        hdg.saws_dowel_type(hdg.DOWEL_MAT_90, hdg.F0_90, hdg.K0_90, hdg.K1_90)
-        ops.section('HankinsonDowel2d', hdg.SEC_TAG, '-responseHankinson',
-                    hdg.DOWEL_MAT_0, hdg.DOWEL_MAT_90)
+        hdg.saws_dowel_type(hdg.DOWEL_MAT, hdg.F0_0, hdg.K0_0, hdg.K1_0)
+        ops.section('HankinsonSection2d', hdg.SEC_TAG, '-paramHankinson', hdg.DOWEL_MAT,
+                    '-param', 'F0', hdg.F0_0, hdg.F0_90,
+                    '-param', 'S0', hdg.K0_0, hdg.K0_90,
+                    '-param', 'K1', hdg.K1_0, hdg.K1_90)
         coords = hdg.dowel_coordinates_rp(hdg.N_ROWS, hdg.N_COLUMNS, a1, a2, a3, a4)
         dowels = hdg.build_dowel_group(coords, hdg.SEC_TAG, hdg.MASTER_NODE)
         m_hist, phi_hist = hdg.push_moment(0.01, 60)

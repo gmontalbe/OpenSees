@@ -1,9 +1,9 @@
 # Worked example: assembling a timber dowel GROUP (not a single dowel) out of
-# HankinsonDowel2d sections, following the "Building a dowel group" recipe --
+# HankinsonSection2d sections, following the "Building a dowel group" recipe --
 # one zeroLengthSection per physical dowel location, all tied to a shared
 # rigid master node with rigidLink('beam', ...).
 #
-# HankinsonDowel2d itself only ever sees a single dowel's 2-D in-plane slip;
+# HankinsonSection2d itself only ever sees a single dowel's 2-D in-plane slip;
 # it has no notion of a "group". The group geometry (how many dowels, their
 # spacing, and therefore their lever arms about the connection's reference
 # point) lives entirely in ordinary node coordinates plus the rigidLink
@@ -11,16 +11,16 @@
 # of nodal equilibrium (sum of F_i x r_i) with no additional bookkeeping.
 #
 # Each dowel's 0-deg/90-deg calibration is Hankinson-blended by
-# HankinsonDowel2d in RESPONSE mode (-responseHankinson mat0 mat90): two
-# SAWSMaterial instances (the Folz & Filiatrault CUREE pinching hysteretic
-# model), one calibrated parallel to grain and one perpendicular, whose
-# response is blended per dowel according to its own current slip direction.
-# SAWSMaterial has no setParameter/updateParameter (checked directly against
-# SRC/material/uniaxial/SAWSMaterial.cpp), so it cannot be driven through
-# HankinsonDowel2d's PARAMETER mode (-paramHankinson, used with e.g.
-# DowelType in tests/test_hankinson_dowel2d.py) -- response-level blending is
-# the only option, which is exactly the "works with any UniaxialMaterial"
-# case Mode B exists for.
+# HankinsonSection2d's parameter-level interpolation (-paramHankinson mat):
+# a single SAWSMaterial (the Folz & Filiatrault CUREE pinching hysteretic
+# model) has its F0/S0/K1 parameters re-interpolated between the 0-deg and
+# 90-deg calibration values -- via SAWSMaterial's setParameter/
+# updateParameter -- and pushed back into the SAME material at every commit.
+# This is the literal Schweigler formulation: there is one physical dowel
+# law whose *parameters* vary with grain angle, not two independent
+# materials whose responses get blended (an earlier "response-level" mode
+# that did the latter was removed from HankinsonSection2d -- see
+# SRC/material/section/HankinsonSection2d.h for why it isn't physical).
 #
 # The default group below reproduces the geometry of Schweigler et al.'s
 # worked example (a 3x3 dowel connection): see /schweigler_implementation/
@@ -59,7 +59,7 @@ def build_dowel_group(dowel_coords, sec_tag, master_node,
     """Place one zeroLengthSection element (hosting section `sec_tag`) at
     each (x, y) in dowel_coords, and rigid-link its free node to
     `master_node`. Requires ops.model('basic', '-ndm', 2, '-ndf', 3) and
-    `sec_tag` to already be defined (typically a HankinsonDowel2d section --
+    `sec_tag` to already be defined (typically a HankinsonSection2d section --
     every element below shares the same prototype tag; ZeroLengthSection
     calls the section's getCopy() per element, so each dowel gets its own
     independent state/history).
@@ -92,10 +92,16 @@ def saws_dowel_type(tag, F0, K0, K1, DU=0.05, FI_frac=0.10,
     """A SAWSMaterial (Folz & Filiatrault CUREE pinching hysteretic model)
     whose monotonic backbone is the identical Foschi exponential envelope
     used by DowelType's '-exponential' option:
-        F = (F0 + R1*S0*|d|)(1 - exp(-S0*|d|/F0)),   R1 = K1/K0, S0 = K0
+        F = (F0 + K1*|d|)(1 - exp(-S0*|d|/F0)),   S0 = K0
     (confirmed against the HYSTR envelope logic in SAWSMaterial.cpp, which
-    is a direct port of the same Foschi curve). Only F0/K0/K1 are
-    Hankinson-relevant (they set the 0-deg/90-deg calibration); DU (cap
+    is a direct port of the same Foschi curve). F0/K0(S0)/K1 are the three
+    Hankinson-relevant parameters -- SAWSMaterial exposes them directly as
+    "F0"/"S0"/"K1" via setParameter/updateParameter (K1 rather than only the
+    ratio R1, for the same reason DowelType exposes K1p directly: Hankinson-
+    interpolating R1 and S0 separately does not give the same result as
+    interpolating K1 itself). This function's F0/K0/K1 arguments only fix
+    the material's starting values; the section below (via -paramHankinson)
+    is what actually re-interpolates them at every commit. DU (cap
     displacement) and the R2/R3/R4/ALPHA/BETA pinching/degradation shape
     parameters are representative CUREE-model values, not fit to any
     particular test data. DU=0.05 m keeps the failure displacement DF
@@ -120,17 +126,21 @@ F0_90, K0_90, K1_90 = 14.18, 19640.0, 739.0
 A1, A2, A3, A4 = 0.070, 0.030, 0.080, 0.030
 N_ROWS, N_COLUMNS = 3, 3
 
-DOWEL_MAT_0, DOWEL_MAT_90, SEC_TAG, MASTER_NODE = 20, 21, 1, 9000
+DOWEL_MAT, SEC_TAG, MASTER_NODE = 20, 1, 9000
 
 
 def build_model():
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
 
-    saws_dowel_type(DOWEL_MAT_0, F0_0, K0_0, K1_0)     # 0-deg calibration
-    saws_dowel_type(DOWEL_MAT_90, F0_90, K0_90, K1_90)  # 90-deg calibration
-    ops.section('HankinsonDowel2d', SEC_TAG, '-responseHankinson',
-                DOWEL_MAT_0, DOWEL_MAT_90)
+    # One SAWSMaterial, started at the 0-deg calibration; HankinsonSection2d
+    # re-interpolates its F0/S0/K1 between the 0-deg and 90-deg values
+    # below (via setParameter/updateParameter) at every commit.
+    saws_dowel_type(DOWEL_MAT, F0_0, K0_0, K1_0)
+    ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
+                '-param', 'F0', F0_0, F0_90,
+                '-param', 'S0', K0_0, K0_90,
+                '-param', 'K1', K1_0, K1_90)
 
     coords = dowel_coordinates_rp(N_ROWS, N_COLUMNS, A1, A2, A3, A4)
     dowels = build_dowel_group(coords, SEC_TAG, MASTER_NODE)
@@ -155,6 +165,11 @@ def apply_normal_force(n_target, pattern_tag=5, n_steps=10):
     ops.timeSeries('Linear', pattern_tag)
     ops.pattern('Plain', pattern_tag, pattern_tag)
     ops.load(MASTER_NODE, n_target, 0.0, 0.0)
+    # wipeAnalysis() first: if a previous analysis object still exists (e.g.
+    # push_moment() ran before this), the analysis commands below silently
+    # keep the OLD constraint handler and print "WARNING can't set handler
+    # after analysis is created" instead of actually reconfiguring it.
+    ops.wipeAnalysis()
     ops.constraints('Transformation')
     ops.numberer('RCM')
     ops.system('UmfPack')
@@ -173,6 +188,11 @@ def push_moment(m_target, n_steps, pattern_tag=1):
     ops.timeSeries('Linear', pattern_tag)
     ops.pattern('Plain', pattern_tag, pattern_tag)
     ops.load(MASTER_NODE, 0.0, 0.0, m_target)
+    # See the matching comment in apply_normal_force(): without
+    # wipeAnalysis() first, this reconfiguration is silently ignored (with a
+    # warning) whenever apply_normal_force() ran first and left an analysis
+    # object in place.
+    ops.wipeAnalysis()
     ops.constraints('Transformation')
     ops.numberer('RCM')
     ops.system('UmfPack')
@@ -259,7 +279,7 @@ def plot_dowel_group(dowels, ax=None, force_scale=None, title=None):
 # larger N eats into each dowel's capacity and can push the higher-preload
 # curves into non-convergence if M_TARGET is raised much further).
 NORMAL_FORCE_LEVELS = [0.0, 40.0, 80.0]
-M_TARGET = 5
+M_TARGET = 10
 
 if __name__ == '__main__':
     try:
@@ -304,8 +324,8 @@ if __name__ == '__main__':
     if have_plt:
         fig.suptitle("3x3 dowel group: force transfer under varying axial "
                       "preload, at M = %.1f kN.m"
-                      "\n(HankinsonDowel2d + SAWSMaterial, "
-                      "-responseHankinson)" % M_TARGET)
+                      "\n(HankinsonSection2d + SAWSMaterial, "
+                      "-paramHankinson)" % M_TARGET)
         fig.tight_layout()
 
         fig2, ax2 = plt.subplots(figsize=(6.5, 5))
