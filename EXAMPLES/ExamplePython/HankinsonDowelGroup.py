@@ -22,11 +22,24 @@
 # that did the latter was removed from HankinsonSection2d -- see
 # SRC/material/section/HankinsonSection2d.h for why it isn't physical).
 #
-# The default group below reproduces the geometry of Schweigler et al.'s
-# worked example (a 3x3 dowel connection): see /schweigler_implementation/
-# MainAnalysis.py, function dowelCoordinatesRP in ModelFunctions.py. Units
-# are consistent with the calibration values (force in kN, length in m) --
-# the same scale used throughout tests/test_hankinson_dowel2d.py.
+# The demo below builds the SAME 3x3 dowel-group connection two ways and
+# checks they agree to round-off:
+#
+#   1. by hand: one zeroLengthSection per dowel, all rigidLink('beam', ...)ed
+#      to a shared master node -- 9 elements, 9 constraints;
+#   2. as ONE element: the same 9 HankinsonSection2d dowels, but wrapped in a
+#      single BoltGroupSection2d, which takes the single-dowel section as a
+#      PROTOTYPE, copies it once per fastener ('-grid nRows nCols a1 a2'
+#      lays out the grid), and internally does what the rigidLink model does
+#      with nodes and constraints: map the reference point's (u_x, u_y,
+#      theta) onto each fastener by its lever arm and sum the forces back
+#      into (N, V, M).
+#
+# The 3x3 group geometry below reproduces Schweigler et al.'s worked example
+# (see /schweigler_implementation/MainAnalysis.py, function dowelCoordinatesRP
+# in ModelFunctions.py). Units are consistent with the calibration values
+# (force in kN, length in m) -- the same scale used throughout
+# tests/test_hankinson_dowel2d.py.
 #
 # Run standalone:
 #   cd EXAMPLES/ExamplePython && cp ../../build/Release/OpenSeesPy.so ./opensees.so
@@ -37,89 +50,26 @@ try:
 except ModuleNotFoundError:
     import openseespy.opensees as ops
 
-
-def dowel_coordinates_rp(n_rows, n_columns, a1, a2, a3, a4):
-    """Grid of dowel (x, y) coordinates referred to the group's geometric
-    centre (the connection's reference point RP). x runs parallel to grain
-    at spacing a1 (column pitch), y runs perpendicular to grain at spacing
-    a2 (row pitch); a3/a4 are the edge distances of the first row/column.
-    Mirrors ModelFunctions.dowelCoordinatesRP in the Python reference."""
-    coords = []
-    for row in range(n_rows):
-        for col in range(n_columns):
-            coords.append((a3 + a1 * col, a4 + a2 * row))
-    x_cg = a3 + (0.5 * n_columns - 0.5) * a1
-    y_cg = a4 + (0.5 * n_rows - 0.5) * a2
-    return [(x - x_cg, y - y_cg) for x, y in coords]
-
-
-def build_dowel_group(dowel_coords, sec_tag, master_node,
-                       ground_node_start=1000, free_node_start=2000,
-                       ele_tag_start=1):
-    """Place one zeroLengthSection element (hosting section `sec_tag`) at
-    each (x, y) in dowel_coords, and rigid-link its free node to
-    `master_node`. Requires ops.model('basic', '-ndm', 2, '-ndf', 3) and
-    `sec_tag` to already be defined (typically a HankinsonSection2d section --
-    every element below shares the same prototype tag; ZeroLengthSection
-    calls the section's getCopy() per element, so each dowel gets its own
-    independent state/history).
-
-    The grain direction is assumed uniform across the whole connection (a
-    single timber member), so every element uses the same '-orient 1 0 0'
-    (local x = global x = parallel-to-grain); only the dowels' positions --
-    not their orientation -- vary across the group.
-
-    Returns a list of (ele_tag, x, y) in the same order as dowel_coords.
-    """
-    ops.node(master_node, 0.0, 0.0)
-    info = []
-    for i, (x, y) in enumerate(dowel_coords):
-        gnode = ground_node_start + i
-        fnode = free_node_start + i
-        etag = ele_tag_start + i
-        ops.node(gnode, x, y)
-        ops.fix(gnode, 1, 1, 1)
-        ops.node(fnode, x, y)
-        ops.element('zeroLengthSection', etag, gnode, fnode, sec_tag,
-                    '-orient', 1, 0, 0)
-        ops.rigidLink('beam', master_node, fnode)
-        info.append((etag, x, y))
-    return info
-
-
-def saws_dowel_type(tag, F0, K0, K1, DU=0.05, FI_frac=0.10,
-                     R2=-0.05, R3=1.0, R4=0.0, ALPHA=0.8, BETA=1.05):
-    """A SAWSMaterial (Folz & Filiatrault CUREE pinching hysteretic model)
-    whose monotonic backbone is the identical Foschi exponential envelope
-    used by DowelType's '-exponential' option:
-        F = (F0 + K1*|d|)(1 - exp(-S0*|d|/F0)),   S0 = K0
-    (confirmed against the HYSTR envelope logic in SAWSMaterial.cpp, which
-    is a direct port of the same Foschi curve). F0/K0(S0)/K1 are the three
-    Hankinson-relevant parameters -- SAWSMaterial exposes them directly as
-    "F0"/"S0"/"K1" via setParameter/updateParameter (K1 rather than only the
-    ratio R1, for the same reason DowelType exposes K1p directly: Hankinson-
-    interpolating R1 and S0 separately does not give the same result as
-    interpolating K1 itself). This function's F0/K0/K1 arguments only fix
-    the material's starting values; the section below (via -paramHankinson)
-    is what actually re-interpolates them at every commit. DU (cap
-    displacement) and the R2/R3/R4/ALPHA/BETA pinching/degradation shape
-    parameters are representative CUREE-model values, not fit to any
-    particular test data. DU=0.05 m keeps the failure displacement DF
-    (computed internally from FI/R2/R4) comfortably beyond DU for both
-    calibrations here (DF ~ 0.085 m at 0 deg, ~0.10 m at 90 deg).
-    """
-    R1 = K1 / K0
-    FI = FI_frac * F0
-    ops.uniaxialMaterial('SAWS', tag, F0, FI, DU, K0,
-                          R1, R2, R3, R4, ALPHA, BETA)
-
-
 # 0-degree (parallel-to-grain) / 90-degree (perpendicular-to-grain)
 # calibration -- the Foschi envelope values from Schweigler et al., already
 # validated bit-exact against ModelFunctions.slipCurve in
-# test_foschi_hankinson_matches_closed_form (there, driving DowelType).
+# test_foschi_hankinson_matches_closed_form (there, driving DowelType):
+#     F = (F0 + K1*|d|)(1 - exp(-S0*|d|/F0)),   S0 = K0
 F0_0, K0_0, K1_0 = 19.1, 24460.0, 462.0
 F0_90, K0_90, K1_90 = 14.18, 19640.0, 739.0
+
+# SAWSMaterial (Folz & Filiatrault CUREE pinching hysteretic model) shape
+# parameters: DU (cap displacement) and R2/R3/R4/ALPHA/BETA are
+# representative CUREE-model values, not fit to any particular test data.
+# DU=0.05 m keeps the failure displacement DF (computed internally from
+# FI/R2/R4) comfortably beyond DU for both calibrations here (DF ~ 0.085 m
+# at 0 deg, ~0.10 m at 90 deg). F0/K0(S0)/K1 are the three Hankinson-relevant
+# parameters -- SAWSMaterial exposes them directly via setParameter/
+# updateParameter as "F0"/"S0"/"K1" (K1 rather than only the ratio R1, since
+# Hankinson-interpolating R1 and S0 separately does not give the same result
+# as interpolating K1 itself).
+SAWS_DU, SAWS_FI_FRAC = 0.05, 0.10
+SAWS_R2, SAWS_R3, SAWS_R4, SAWS_ALPHA, SAWS_BETA = -0.05, 1.0, 0.0, 0.8, 1.05
 
 # 3x3 group geometry (Schweigler's MainAnalysis.py): spacing parallel to
 # grain a1, perpendicular a2, edge distances a3/a4, all in metres.
@@ -127,57 +77,209 @@ A1, A2, A3, A4 = 0.070, 0.030, 0.080, 0.030
 N_ROWS, N_COLUMNS = 3, 3
 
 DOWEL_MAT, SEC_TAG, MASTER_NODE = 20, 1, 9000
-
-
 GROUP_SEC_TAG, GROUP_ELE_TAG, GROUP_GROUND_NODE = 2, 500, 500
 
+# Axial preload levels (kN) to sweep below. 0/40/80 kN span from no preload
+# up to ~46% of the group's axial capacity (9*F0_0 = 172 kN) -- large enough
+# for the N-M interaction to be visible, while M_TARGET stays inside the
+# moment capacity at every preload level (a larger N eats into each dowel's
+# capacity and can push the higher-preload curves into non-convergence if
+# M_TARGET is raised much further).
+NORMAL_FORCE_LEVELS = [0.0, 40.0, 80.0]
+M_TARGET = 10
 
-def build_model():
-    """The hand-built group: one zeroLengthSection element per dowel, tied
-    together with rigidLink. Kept as the reference model that
-    build_group_model() below is verified against -- see
-    tests/test_bolt_group_section2d.py, where the two must agree to
-    round-off."""
+# Grid of dowel (x, y) coordinates referred to the group's geometric centre
+# (the connection's reference point RP). x runs parallel to grain at spacing
+# A1 (column pitch), y runs perpendicular to grain at spacing A2 (row
+# pitch); A3/A4 are the edge distances of the first row/column. Mirrors
+# ModelFunctions.dowelCoordinatesRP in the Python reference. This is fixed
+# geometry (the constants above never change through the file), so it is
+# computed once and reused everywhere below.
+raw_coords = [(A3 + A1 * col, A4 + A2 * row)
+              for row in range(N_ROWS) for col in range(N_COLUMNS)]
+x_cg = A3 + (0.5 * N_COLUMNS - 0.5) * A1
+y_cg = A4 + (0.5 * N_ROWS - 0.5) * A2
+coords = [(x - x_cg, y - y_cg) for x, y in raw_coords]
+
+try:
+    import matplotlib.pyplot as plt
+    have_plt = True
+    # Dowel-group force-vector panels: one per preload level N, all at the
+    # SAME final moment M_TARGET, so the panels isolate the effect of axial
+    # preload on the force pattern rather than of rotation.
+    fig, axes = plt.subplots(1, len(NORMAL_FORCE_LEVELS), figsize=(16, 5.5))
+    if len(NORMAL_FORCE_LEVELS) == 1:
+        axes = [axes]
+except ImportError:
+    have_plt = False
+    print("\nmatplotlib not available -- skipping plots.\n")
+
+# ---------------------------------------------------------------------
+# Cross-check, at the hardest preload level: the hand-built 9-element +
+# rigidLink model must agree with the single BoltGroupSection2d element to
+# round-off (both are linear in the rotation) -- the demo itself
+# demonstrates that the two model forms are the same mechanics.
+# ---------------------------------------------------------------------
+
+# --- 9 elements + rigidLink -----------------------------------------------
+ops.wipe()
+ops.model('basic', '-ndm', 2, '-ndf', 3)
+
+# One SAWSMaterial, started at the 0-deg calibration; HankinsonSection2d
+# re-interpolates its F0/S0/K1 between the 0-deg and 90-deg values below
+# (via setParameter/updateParameter) at every commit.
+R1 = K1_0 / K0_0
+FI = SAWS_FI_FRAC * F0_0
+ops.uniaxialMaterial('SAWS', DOWEL_MAT, F0_0, FI, SAWS_DU, K0_0,
+                      R1, SAWS_R2, SAWS_R3, SAWS_R4, SAWS_ALPHA, SAWS_BETA)
+ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
+            '-param', 'F0', F0_0, F0_90,
+            '-param', 'S0', K0_0, K0_90,
+            '-param', 'K1', K1_0, K1_90)
+
+# One zeroLengthSection element (hosting SEC_TAG) per dowel, its free node
+# rigid-linked to the master node. The grain direction is assumed uniform
+# across the whole connection (a single timber member), so every element
+# uses the same '-orient 1 0 0' (local x = global x = parallel-to-grain);
+# only the dowels' positions -- not their orientation -- vary across the
+# group. Requires ops.model('basic', '-ndm', 2, '-ndf', 3).
+ops.node(MASTER_NODE, 0.0, 0.0)
+for i, (x, y) in enumerate(coords):
+    gnode = 1000 + i
+    fnode = 2000 + i
+    etag = 1 + i
+    ops.node(gnode, x, y)
+    ops.fix(gnode, 1, 1, 1)
+    ops.node(fnode, x, y)
+    ops.element('zeroLengthSection', etag, gnode, fnode, SEC_TAG,
+                '-orient', 1, 0, 0)
+    ops.rigidLink('beam', MASTER_NODE, fnode)
+
+# Ramp a constant axial preload N (global/local x = parallel-to-grain) onto
+# the master node, then loadConst() it so it stays in place under the
+# push_moment pattern below. N acts as a pure rigid-body translation of the
+# whole group (no lever arm, unlike M), so every dowel picks up the *same*
+# extra parallel-to-grain slip. The group's axial stiffness is the 9 dowels'
+# K0_0 acting in parallel (~9x24460 = 220,000 kN/m here), so N needs to be a
+# sizeable fraction of the group's axial capacity (~9*F0_0 = 172 kN here)
+# before its effect on the moment response is visible -- hence 80 kN here.
+ops.timeSeries('Linear', 5)
+ops.pattern('Plain', 5, 5)
+ops.load(MASTER_NODE, 80.0, 0.0, 0.0)
+ops.wipeAnalysis()
+ops.constraints('Transformation')
+ops.numberer('RCM')
+ops.system('UmfPack')
+ops.test('NormDispIncr', 1.0e-8, 25)
+ops.algorithm('Newton')
+ops.integrator('LoadControl', 1.0 / 10)
+ops.analysis('Static')
+for _ in range(10):
+    ok = ops.analyze(1)
+    assert ok == 0, "normal-force preload failed to converge"
+ops.loadConst('-time', 0.0)
+
+# Push the in-plane moment M (about local z), 80 LoadControl steps.
+ops.timeSeries('Linear', 1)
+ops.pattern('Plain', 1, 1)
+ops.load(MASTER_NODE, 0.0, 0.0, M_TARGET)
+ops.wipeAnalysis()
+ops.constraints('Transformation')
+ops.numberer('RCM')
+ops.system('UmfPack')
+ops.test('NormDispIncr', 1.0e-8, 25)
+ops.algorithm('Newton')
+ops.integrator('LoadControl', 1.0 / 80)
+ops.analysis('Static')
+phi_hist = [0.0]
+for _ in range(80):
+    ok = ops.analyze(1)
+    assert ok == 0, "pushover failed to converge"
+    phi_hist.append(ops.nodeDisp(MASTER_NODE, 3))
+phi_multi = phi_hist[-1]
+
+# --- the same connection as ONE BoltGroupSection2d element ----------------
+# This replaces 9 elements plus 9 rigidLink constraints with 1 element and
+# 3 free DOF, and -- because there are no multi-point constraints left -- it
+# also sidesteps the TransformationConstraintHandler problem documented in
+# HankinsonDowelGroup3d.py's apply_normal_force step.
+ops.wipe()
+ops.model('basic', '-ndm', 2, '-ndf', 3)
+
+R1 = K1_0 / K0_0
+FI = SAWS_FI_FRAC * F0_0
+ops.uniaxialMaterial('SAWS', DOWEL_MAT, F0_0, FI, SAWS_DU, K0_0,
+                      R1, SAWS_R2, SAWS_R3, SAWS_R4, SAWS_ALPHA, SAWS_BETA)
+ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
+            '-param', 'F0', F0_0, F0_90,
+            '-param', 'S0', K0_0, K0_90,
+            '-param', 'K1', K1_0, K1_90)
+ops.section('BoltGroupSection2d', GROUP_SEC_TAG, '-section', SEC_TAG,
+            '-grid', N_ROWS, N_COLUMNS, A1, A2)
+
+ops.node(GROUP_GROUND_NODE, 0.0, 0.0)
+ops.fix(GROUP_GROUND_NODE, 1, 1, 1)
+ops.node(MASTER_NODE, 0.0, 0.0)
+ops.element('zeroLengthSection', GROUP_ELE_TAG,
+            GROUP_GROUND_NODE, MASTER_NODE, GROUP_SEC_TAG,
+            '-orient', 1, 0, 0)
+
+ops.timeSeries('Linear', 5)
+ops.pattern('Plain', 5, 5)
+ops.load(MASTER_NODE, 80.0, 0.0, 0.0)
+ops.wipeAnalysis()
+ops.constraints('Transformation')
+ops.numberer('RCM')
+ops.system('UmfPack')
+ops.test('NormDispIncr', 1.0e-8, 25)
+ops.algorithm('Newton')
+ops.integrator('LoadControl', 1.0 / 10)
+ops.analysis('Static')
+for _ in range(10):
+    ok = ops.analyze(1)
+    assert ok == 0, "normal-force preload failed to converge"
+ops.loadConst('-time', 0.0)
+
+ops.timeSeries('Linear', 1)
+ops.pattern('Plain', 1, 1)
+ops.load(MASTER_NODE, 0.0, 0.0, M_TARGET)
+ops.wipeAnalysis()
+ops.constraints('Transformation')
+ops.numberer('RCM')
+ops.system('UmfPack')
+ops.test('NormDispIncr', 1.0e-8, 25)
+ops.algorithm('Newton')
+ops.integrator('LoadControl', 1.0 / 80)
+ops.analysis('Static')
+phi_hist = [0.0]
+for _ in range(80):
+    ok = ops.analyze(1)
+    assert ok == 0, "pushover failed to converge"
+    phi_hist.append(ops.nodeDisp(MASTER_NODE, 3))
+phi_single = phi_hist[-1]
+
+print("cross-check at N = %.0f kN: phi(9 elements + rigidLink) = %.12e"
+      % (NORMAL_FORCE_LEVELS[-1], phi_multi))
+print("                            phi(1 BoltGroupSection2d)  = %.12e"
+      % phi_single)
+print("                            difference                 = %.3e\n"
+      % abs(phi_multi - phi_single))
+
+# ---------------------------------------------------------------------
+# The BoltGroupSection2d model swept over axial preload, at the same
+# M_TARGET each time -- so the panels below isolate the effect of preload
+# on the force pattern rather than of rotation.
+# ---------------------------------------------------------------------
+
+curves = {}
+for i, n_val in enumerate(NORMAL_FORCE_LEVELS):
     ops.wipe()
     ops.model('basic', '-ndm', 2, '-ndf', 3)
 
-    # One SAWSMaterial, started at the 0-deg calibration; HankinsonSection2d
-    # re-interpolates its F0/S0/K1 between the 0-deg and 90-deg values
-    # below (via setParameter/updateParameter) at every commit.
-    saws_dowel_type(DOWEL_MAT, F0_0, K0_0, K1_0)
-    ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
-                '-param', 'F0', F0_0, F0_90,
-                '-param', 'S0', K0_0, K0_90,
-                '-param', 'K1', K1_0, K1_90)
-
-    coords = dowel_coordinates_rp(N_ROWS, N_COLUMNS, A1, A2, A3, A4)
-    dowels = build_dowel_group(coords, SEC_TAG, MASTER_NODE)
-    return dowels
-
-
-def build_group_model():
-    """The same connection as ONE element, via BoltGroupSection2d.
-
-    BoltGroupSection2d takes the single-dowel HankinsonSection2d above as a
-    PROTOTYPE and copies it once per fastener, then does internally what
-    build_dowel_group() does with nodes and constraints: it maps the
-    reference point's (u_x, u_y, theta) onto each fastener by that
-    fastener's lever arm and sums the forces back into (N, V, M). '-grid
-    nRows nCols a1 a2' lays out the same centroid-referred grid
-    dowel_coordinates_rp() computes (the edge distances a3/a4 cancel out of
-    centroid-referred coordinates, so they are not needed here).
-
-    This replaces 9 elements plus 9 rigidLink constraints with 1 element and
-    3 free DOF, and -- because there are no multi-point constraints left --
-    it also sidesteps the TransformationConstraintHandler problem documented
-    in HankinsonDowelGroup3d.apply_normal_force().
-
-    Returns (ele_tag, coords) so callers can label per-fastener output.
-    """
-    ops.wipe()
-    ops.model('basic', '-ndm', 2, '-ndf', 3)
-
-    saws_dowel_type(DOWEL_MAT, F0_0, K0_0, K1_0)
+    R1 = K1_0 / K0_0
+    FI = SAWS_FI_FRAC * F0_0
+    ops.uniaxialMaterial('SAWS', DOWEL_MAT, F0_0, FI, SAWS_DU, K0_0,
+                          R1, SAWS_R2, SAWS_R3, SAWS_R4, SAWS_ALPHA, SAWS_BETA)
     ops.section('HankinsonSection2d', SEC_TAG, '-paramHankinson', DOWEL_MAT,
                 '-param', 'F0', F0_0, F0_90,
                 '-param', 'S0', K0_0, K0_90,
@@ -192,281 +294,115 @@ def build_group_model():
                 GROUP_GROUND_NODE, MASTER_NODE, GROUP_SEC_TAG,
                 '-orient', 1, 0, 0)
 
-    return GROUP_ELE_TAG, dowel_coordinates_rp(N_ROWS, N_COLUMNS, A1, A2, A3, A4)
+    if n_val:
+        ops.timeSeries('Linear', 5)
+        ops.pattern('Plain', 5, 5)
+        ops.load(MASTER_NODE, n_val, 0.0, 0.0)
+        ops.wipeAnalysis()
+        ops.constraints('Transformation')
+        ops.numberer('RCM')
+        ops.system('UmfPack')
+        ops.test('NormDispIncr', 1.0e-8, 25)
+        ops.algorithm('Newton')
+        ops.integrator('LoadControl', 1.0 / 10)
+        ops.analysis('Static')
+        for _ in range(10):
+            ok = ops.analyze(1)
+            assert ok == 0, "normal-force preload failed to converge"
+        ops.loadConst('-time', 0.0)
 
-
-def apply_normal_force(n_target, pattern_tag=5, n_steps=10):
-    """Ramp a constant axial preload N (global/local x = parallel-to-grain,
-    per build_dowel_group's '-orient 1 0 0') onto the master node, then
-    loadConst() it so it stays in place under a later push_moment() pattern.
-
-    N acts as a pure rigid-body translation of the whole group (no lever
-    arm, unlike M), so every dowel picks up the *same* extra parallel-to-
-    grain slip. The group's axial stiffness is the 9 dowels' K0_0 acting in
-    parallel (~9x24460 = 220,000 kN/m here), so small N (order 10-20 kN)
-    only produces ~1e-4 m of preload -- negligible next to the 1e-2-1e-1 m
-    of rotation-induced slip a moment pushover produces at the outer
-    dowels, and the M-phi curve will look unchanged. N needs to be a
-    sizeable fraction of the group's axial capacity (~9*F0_0 = 172 kN here)
-    before its effect on the moment response is visible.
-    """
-    ops.timeSeries('Linear', pattern_tag)
-    ops.pattern('Plain', pattern_tag, pattern_tag)
-    ops.load(MASTER_NODE, n_target, 0.0, 0.0)
-    # wipeAnalysis() first: if a previous analysis object still exists (e.g.
-    # push_moment() ran before this), the analysis commands below silently
-    # keep the OLD constraint handler and print "WARNING can't set handler
-    # after analysis is created" instead of actually reconfiguring it.
+    ops.timeSeries('Linear', 1)
+    ops.pattern('Plain', 1, 1)
+    ops.load(MASTER_NODE, 0.0, 0.0, M_TARGET)
     ops.wipeAnalysis()
     ops.constraints('Transformation')
     ops.numberer('RCM')
     ops.system('UmfPack')
     ops.test('NormDispIncr', 1.0e-8, 25)
     ops.algorithm('Newton')
-    ops.integrator('LoadControl', 1.0 / n_steps)
+    ops.integrator('LoadControl', 1.0 / 80)
     ops.analysis('Static')
-
-    for _ in range(n_steps):
-        ok = ops.analyze(1)
-        assert ok == 0, "normal-force preload failed to converge"
-    ops.loadConst('-time', 0.0)
-
-
-def push_moment(m_target, n_steps, pattern_tag=1):
-    ops.timeSeries('Linear', pattern_tag)
-    ops.pattern('Plain', pattern_tag, pattern_tag)
-    ops.load(MASTER_NODE, 0.0, 0.0, m_target)
-    # See the matching comment in apply_normal_force(): without
-    # wipeAnalysis() first, this reconfiguration is silently ignored (with a
-    # warning) whenever apply_normal_force() ran first and left an analysis
-    # object in place.
-    ops.wipeAnalysis()
-    ops.constraints('Transformation')
-    ops.numberer('RCM')
-    ops.system('UmfPack')
-    ops.test('NormDispIncr', 1.0e-8, 25)
-    ops.algorithm('Newton')
-    ops.integrator('LoadControl', 1.0 / n_steps)
-    ops.analysis('Static')
-
     m_hist, phi_hist = [0.0], [0.0]
-    for _ in range(n_steps):
+    for _ in range(80):
         ok = ops.analyze(1)
         assert ok == 0, "pushover failed to converge"
-        m_hist.append(m_target * len(phi_hist) / n_steps)
+        m_hist.append(M_TARGET * len(phi_hist) / 80)
         phi_hist.append(ops.nodeDisp(MASTER_NODE, 3))
-    return m_hist, phi_hist
+    curves[n_val] = (phi_hist, m_hist)
 
-
-def plot_bolt_group(ele_tag, coords, ax=None, force_scale=None, title=None,
-                     ref_node=None):
-    """The one-element counterpart of plot_dowel_group(): identical picture,
-    but each fastener's force comes from the group section's own
-    'boltForces' response instead of from a per-dowel ground node's
-    reaction. The sign convention differs accordingly -- 'boltForces' is
-    already the force the fastener carries, so unlike plot_dowel_group()
-    there is no reaction to negate.
-
-    Note the plural in 'bolt i forces' if you read fasteners individually:
-    HankinsonSection2d intercepts the SINGULAR 'force' with its own scalar
-    slip-law force, so only 'forces' gives the (P, Vy) pair. 'boltForces'
-    is the concatenation of the plural one.
-    """
-    import matplotlib.pyplot as plt
-    if ax is None:
-        _, ax = plt.subplots(figsize=(6.5, 6.5))
-
-    f = ops.eleResponse(ele_tag, 'section', 'boltForces')
-    xs = [x for x, _ in coords]
-    ys = [y for _, y in coords]
-    fx = [f[2 * i] for i in range(len(coords))]
-    fy = [f[2 * i + 1] for i in range(len(coords))]
-
-    fmag = [(u * u + v * v) ** 0.5 for u, v in zip(fx, fy)]
-    fmax = max(fmag) if fmag else 0.0
-    if force_scale is None:
-        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0e-6)
-        force_scale = 0.4 * span / fmax if fmax > 0 else 1.0
-
-    # unpacked by index, not by position, so this works unchanged for the 3D
-    # model in HankinsonDowelGroup3d (where nodeCoord returns three values)
-    coord = ops.nodeCoord(MASTER_NODE if ref_node is None else ref_node)
-    mx, my = coord[0], coord[1]
-    cr = ops.eleResponse(ele_tag, 'section', 'centerOfRotation')
-
-    ax.scatter(xs, ys, s=70, c='saddlebrown', zorder=3, label='dowels')
-    ax.scatter([mx], [my], marker='+', s=140, c='black', zorder=3,
-               linewidths=2, label='reference point')
-    if cr and abs(cr[0]) < 10 * max(abs(v) for v in xs + ys):
-        ax.scatter([cr[0]], [cr[1]], marker='x', s=110, c='tab:blue',
-                   zorder=3, linewidths=2, label='centre of rotation')
-    for x, y in zip(xs, ys):
-        ax.plot([mx, x], [my, y], color='0.75', linewidth=0.8,
-                linestyle='--', zorder=1)
-
-    ax.quiver(xs, ys, [u * force_scale for u in fx],
-              [v * force_scale for v in fy],
-              angles='xy', scale_units='xy', scale=1,
-              color='crimson', width=0.006, zorder=2,
-              label='dowel force')
-
-    for i, ((x, y), m) in enumerate(zip(coords, fmag)):
-        ax.annotate("%d\n%.1f kN" % (i, m), (x, y),
-                    textcoords="offset points", xytext=(7, 7), fontsize=7)
-
-    ax.set_aspect('equal', adjustable='datalim')
-    ax.set_xlabel('x (m, parallel to grain)')
-    ax.set_ylabel('y (m, perpendicular to grain)')
-    ax.grid(True, linestyle=':')
-    ax.legend(loc='best', fontsize=8)
-    if title:
-        ax.set_title(title)
-    return ax
-
-
-def plot_dowel_group(dowels, ax=None, force_scale=None, title=None):
-    """Plot the dowel group's current geometry together with each dowel's
-    force vector, read from the CURRENT analysis state (call ops.reactions()
-    -- done here internally -- right after the ops.analyze() step you want
-    to visualize; no time-stepping happens in this function).
-
-    Each ground node's reaction is the force the timber exerts on the
-    dowel; the force the dowel (connection) exerts back on the timber, at
-    that dowel's location, is its negative -- that is what gets drawn, so
-    arrows point in the direction the connection is "pushing" the timber at
-    each dowel, which is the physically intuitive picture of load transfer
-    through the group.
-    """
-    import matplotlib.pyplot as plt
-    if ax is None:
-        _, ax = plt.subplots(figsize=(6.5, 6.5))
-
-    ops.reactions()
-    xs = [x for _, x, y in dowels]
-    ys = [y for _, x, y in dowels]
-    fx, fy = [], []
-    for etag, x, y in dowels:
-        gnode = 1000 + (etag - 1)   # ground_node_start=1000, ele_tag_start=1
-        Rx, Ry, _ = ops.nodeReaction(gnode)
-        fx.append(-Rx)
-        fy.append(-Ry)
-
-    fmag = [(u * u + v * v) ** 0.5 for u, v in zip(fx, fy)]
-    fmax = max(fmag) if fmag else 0.0
-    if force_scale is None:
-        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0e-6)
-        force_scale = 0.4 * span / fmax if fmax > 0 else 1.0
-
-    mx, my = ops.nodeCoord(MASTER_NODE)
-
-    ax.scatter(xs, ys, s=70, c='saddlebrown', zorder=3, label='dowels')
-    ax.scatter([mx], [my], marker='+', s=140, c='black', zorder=3,
-               linewidths=2, label='rigid reference node')
-    for x, y in zip(xs, ys):
-        ax.plot([mx, x], [my, y], color='0.75', linewidth=0.8,
-                linestyle='--', zorder=1)
-
-    ax.quiver(xs, ys, [u * force_scale for u in fx],
-              [v * force_scale for v in fy],
-              angles='xy', scale_units='xy', scale=1,
-              color='crimson', width=0.006, zorder=2,
-              label='dowel force on timber')
-
-    for (etag, x, y), m in zip(dowels, fmag):
-        ax.annotate("%d\n%.1f kN" % (etag, m), (x, y),
-                    textcoords="offset points", xytext=(7, 7), fontsize=7)
-
-    ax.set_aspect('equal', adjustable='datalim')
-    ax.set_xlabel('x (m, parallel to grain)')
-    ax.set_ylabel('y (m, perpendicular to grain)')
-    ax.grid(True, linestyle=':')
-    ax.legend(loc='best', fontsize=8)
-    if title:
-        ax.set_title(title)
-    return ax
-
-
-# Axial preload levels (kN) to sweep in the __main__ demo below. 0/40/80 kN
-# span from no preload up to ~46% of the group's axial capacity
-# (9*F0_0 = 172 kN) -- large enough for the N-M interaction to be visible,
-# while M_TARGET stays inside the moment capacity at every preload level (a
-# larger N eats into each dowel's capacity and can push the higher-preload
-# curves into non-convergence if M_TARGET is raised much further).
-NORMAL_FORCE_LEVELS = [0.0, 40.0, 80.0]
-M_TARGET = 10
-
-if __name__ == '__main__':
-    try:
-        import matplotlib.pyplot as plt
-        have_plt = True
-        # Dowel-group force-vector panels: one per preload level N, all at
-        # the SAME final moment M_TARGET, so the panels isolate the effect
-        # of axial preload on the force pattern rather than of rotation.
-        # ops holds only ONE live domain at a time (build_model() wipes it),
-        # so each panel must be drawn immediately after its own analysis --
-        # not after the whole N-sweep, by which point only the last N's
-        # converged state would still be queryable.
-        fig, axes = plt.subplots(1, len(NORMAL_FORCE_LEVELS), figsize=(16, 5.5))
-        if len(NORMAL_FORCE_LEVELS) == 1:
-            axes = [axes]
-    except ImportError:
-        have_plt = False
-        print("\nmatplotlib not available -- skipping plots.\n")
-
-    # Cross-check the two model forms once, at the hardest preload level, so
-    # the demo itself demonstrates that they are the same mechanics: the
-    # single BoltGroupSection2d element and the 9-element + rigidLink model
-    # must agree to round-off (both are linear in the rotation).
-    build_model()
-    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
-    phi_multi = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
-    build_group_model()
-    apply_normal_force(NORMAL_FORCE_LEVELS[-1])
-    phi_single = push_moment(m_target=M_TARGET, n_steps=80)[1][-1]
-    print("cross-check at N = %.0f kN: phi(9 elements + rigidLink) = %.12e"
-          % (NORMAL_FORCE_LEVELS[-1], phi_multi))
-    print("                            phi(1 BoltGroupSection2d)  = %.12e"
-          % phi_single)
-    print("                            difference                 = %.3e\n"
-          % abs(phi_multi - phi_single))
-
-    curves = {}
-    for i, n_val in enumerate(NORMAL_FORCE_LEVELS):
-        ele_tag, coords = build_group_model()
-        if n_val:
-            apply_normal_force(n_val)
-        m_hist, phi_hist = push_moment(m_target=M_TARGET, n_steps=80)
-        curves[n_val] = (phi_hist, m_hist)
-
-        # Report both an early-stage secant (where the preload's effect on
-        # each dowel's Hankinson-blended stiffness is clearest) and the
-        # final one (where the response has flattened into a plastic
-        # plateau and relative differences shrink even though they're real).
-        i_mid = len(m_hist) // 3
-        k_mid = m_hist[i_mid] / phi_hist[i_mid]
-        k_final = m_hist[-1] / phi_hist[-1]
-        print("N = %5.1f kN   K_secant(M=%.1f) = %7.2f   "
-              "K_secant(M=%.1f) = %6.2f kN.m/rad"
-              % (n_val, m_hist[i_mid], k_mid, m_hist[-1], k_final))
-
-        if have_plt:
-            plot_bolt_group(ele_tag, coords, ax=axes[i],
-                            title="N = %.0f kN" % n_val)
+    # Report both an early-stage secant (where the preload's effect on each
+    # dowel's Hankinson-blended stiffness is clearest) and the final one
+    # (where the response has flattened into a plastic plateau and relative
+    # differences shrink even though they're real).
+    i_mid = len(m_hist) // 3
+    k_mid = m_hist[i_mid] / phi_hist[i_mid]
+    k_final = m_hist[-1] / phi_hist[-1]
+    print("N = %5.1f kN   K_secant(M=%.1f) = %7.2f   "
+          "K_secant(M=%.1f) = %6.2f kN.m/rad"
+          % (n_val, m_hist[i_mid], k_mid, m_hist[-1], k_final))
 
     if have_plt:
-        fig.suptitle("3x3 dowel group as ONE element: force transfer under "
-                      "varying axial preload, at M = %.1f kN.m"
-                      "\n(BoltGroupSection2d over a HankinsonSection2d "
-                      "prototype + SAWSMaterial)" % M_TARGET)
-        fig.tight_layout()
+        # The group's per-fastener force pattern at the end of this preload
+        # level's pushover, read from the group section's own 'boltForces'
+        # response (the concatenated (Fx, Fy) pairs -- note the plural:
+        # HankinsonSection2d intercepts the SINGULAR 'force' with its own
+        # scalar slip-law force, so only 'forces' gives the (P, Vy) pair).
+        ax = axes[i]
+        f = ops.eleResponse(GROUP_ELE_TAG, 'section', 'boltForces')
+        xs = [x for x, _ in coords]
+        ys = [y for _, y in coords]
+        fx = [f[2 * k] for k in range(len(coords))]
+        fy = [f[2 * k + 1] for k in range(len(coords))]
 
-        fig2, ax2 = plt.subplots(figsize=(6.5, 5))
-        for n_val, (phi_hist, m_hist) in curves.items():
-            ax2.plot(phi_hist, m_hist, label="N = %.0f kN" % n_val)
-        ax2.set_xlabel("Rotation phi (rad)")
-        ax2.set_ylabel("Moment M (kN.m)")
-        ax2.set_title("3x3 dowel group: M-phi under axial preload")
-        ax2.grid(True)
-        ax2.legend()
+        fmag = [(u * u + v * v) ** 0.5 for u, v in zip(fx, fy)]
+        fmax = max(fmag) if fmag else 0.0
+        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0e-6)
+        force_scale = 0.4 * span / fmax if fmax > 0 else 1.0
 
-        plt.show()
+        mx, my = ops.nodeCoord(MASTER_NODE)
+        cr = ops.eleResponse(GROUP_ELE_TAG, 'section', 'centerOfRotation')
+
+        ax.scatter(xs, ys, s=70, c='saddlebrown', zorder=3, label='dowels')
+        ax.scatter([mx], [my], marker='+', s=140, c='black', zorder=3,
+                   linewidths=2, label='reference point')
+        if cr and abs(cr[0]) < 10 * max(abs(v) for v in xs + ys):
+            ax.scatter([cr[0]], [cr[1]], marker='x', s=110, c='tab:blue',
+                       zorder=3, linewidths=2, label='centre of rotation')
+        for x, y in zip(xs, ys):
+            ax.plot([mx, x], [my, y], color='0.75', linewidth=0.8,
+                    linestyle='--', zorder=1)
+
+        ax.quiver(xs, ys, [u * force_scale for u in fx],
+                  [v * force_scale for v in fy],
+                  angles='xy', scale_units='xy', scale=1,
+                  color='crimson', width=0.006, zorder=2,
+                  label='dowel force')
+
+        for j, ((x, y), m) in enumerate(zip(coords, fmag)):
+            ax.annotate("%d\n%.1f kN" % (j, m), (x, y),
+                        textcoords="offset points", xytext=(7, 7), fontsize=7)
+
+        ax.set_aspect('equal', adjustable='datalim')
+        ax.set_xlabel('x (m, parallel to grain)')
+        ax.set_ylabel('y (m, perpendicular to grain)')
+        ax.grid(True, linestyle=':')
+        ax.legend(loc='best', fontsize=8)
+        ax.set_title("N = %.0f kN" % n_val)
+
+if have_plt:
+    fig.suptitle("3x3 dowel group as ONE element: force transfer under "
+                  "varying axial preload, at M = %.1f kN.m"
+                  "\n(BoltGroupSection2d over a HankinsonSection2d "
+                  "prototype + SAWSMaterial)" % M_TARGET)
+    fig.tight_layout()
+
+    fig2, ax2 = plt.subplots(figsize=(6.5, 5))
+    for n_val, (phi_hist, m_hist) in curves.items():
+        ax2.plot(phi_hist, m_hist, label="N = %.0f kN" % n_val)
+    ax2.set_xlabel("Rotation phi (rad)")
+    ax2.set_ylabel("Moment M (kN.m)")
+    ax2.set_title("3x3 dowel group: M-phi under axial preload")
+    ax2.grid(True)
+    ax2.legend()
+
+    plt.show()
